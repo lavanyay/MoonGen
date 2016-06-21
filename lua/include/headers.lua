@@ -100,6 +100,44 @@ ffi.cdef[[
 		union ip4_address	dst;
 	 };
 
+#pragma pack(push)    
+    #pragma pack(1)
+    struct percg_header {
+            uint16_t        preamble;
+        uint8_t            source;
+        uint8_t                destination;
+        uint8_t            isData;
+        uint8_t            flowId;
+     };
+
+    struct percc1_host_state {         
+          uint32_t newRate;
+          uint8_t newLabel;
+          uint32_t oldRate;
+          uint8_t oldLabel;
+          uint8_t bos;
+    };
+    
+    struct percc1_agg {          
+          uint32_t linkCapacity;
+          uint32_t sumSat;
+          uint32_t numSat;
+          uint32_t numUnsat;
+          uint8_t bos;
+    };
+
+    struct percc1_header {
+            uint8_t            isExit;
+        uint8_t         isForward;
+        uint8_t            hop;
+        uint8_t            maxHops;
+        struct percc1_host_state    hostState;
+        struct percc1_host_state    hostState2;
+        struct percc1_agg        agg;        
+        struct percc1_agg        agg2;        
+    };
+#pragma pack(pop)
+
 	struct __attribute__((__packed__)) ip6_header {
 		uint32_t 		vtf;
 		uint16_t  		len;

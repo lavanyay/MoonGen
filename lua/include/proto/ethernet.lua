@@ -38,7 +38,8 @@ eth.TYPE_ARP = 0x0806
 eth.TYPE_IP6 = 0x86dd
 --- EtherType for Ptp
 eth.TYPE_PTP = 0x88f7
-
+--  EtherType for Perc
+eth.TYPE_PERCG = 0x0708
 --- EtherType for LACP (Actually, 'Slow Protocols')
 eth.TYPE_LACP = 0x8809
 
@@ -186,7 +187,9 @@ function etherHeader:getTypeString()
 		cleartext = "(PTP)"
 	elseif type == eth.TYPE_LACP then
 		cleartext = "(LACP)"
-	else
+	elseif type == eth.TYPE_PERCG then
+		cleartext = "(PERCG)"
+	else	   
 		cleartext = "(unknown)"
 	end
 
@@ -259,6 +262,7 @@ local mapNameType = {
 	arp = eth.TYPE_ARP,
 	ptp = eth.TYPE_PTP, 
 	lacp = eth.TYPE_LACP,
+	percg = eth.TYPE_PERCG,
 }
 
 --- Resolve which header comes after this one (in a packet).
