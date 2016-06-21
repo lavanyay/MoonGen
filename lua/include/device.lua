@@ -329,6 +329,7 @@ function mod.waitForLinks(...)
 		end
 	end
 	log:info(green("%d devices are up.", portsUp))
+	return portsUp
 end
 
 
