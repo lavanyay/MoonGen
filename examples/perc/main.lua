@@ -39,17 +39,15 @@ function master(...)
 	 core1 = (thisCore + 1)%numCores
 	 core2 = (thisCore + 2)%numCores
 
-	 if (arg[1] == "tx") then
-	    local txPort = arg[2]
-	    txDev = device.config{ port = txPort, txQueues = 20}
-	 end
 	 
-	 if (arg[3] == "rx") then
-	    local rxPort = arg[4]
-	    rxDev = device.config{ port = rxPort, rxQueues = 20}
-	 end
+	 local txPort = 0
+	 txDev = device.config{ port = txPort, txQueues = 20}
+	 
+	 local rxPort = 1
+	 rxDev = device.config{ port = rxPort, rxQueues = 20}
 
 	 numLinksUp = device.waitForLinks()
+
 	 print("waiting for links")
 	 if (numLinksUp == 2) then 
 	    dpdk.setRuntime(1000)

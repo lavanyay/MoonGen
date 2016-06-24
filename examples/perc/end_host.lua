@@ -15,6 +15,7 @@ local Link = require "examples.perc.perc_link"
 
 local EndHost = {
 	rates = {},
+	queueRates = {}, -- queue x : current, next, changeTime
 	freeQueues = {},
 	queues = {},
 	numPendingMsgs = 0,
@@ -27,7 +28,8 @@ local EndHost = {
 	rxBufs = nil,
 	rxQueue = nil,
 	txQueue = nil,
-	PKT_SIZE = nil
+	PKT_SIZE = nil,
+	dev = nil,
 }
 
 EndHost.__index = EndHost
@@ -42,7 +44,8 @@ function EndHost.new (mem, dev, id, PKT_SIZE)
   self.txQueue = dev:getTxQueue(0)
   self.rxQueue = dev:getRxQueue(0)
   self.PKT_SIZE = PKT_SIZE
-
+  self.dev = dev
+  
   	-- initialize available tx queues for data slave to use
 	-- queue 0 is used for control packets
   for i=0, 127 do
@@ -110,9 +113,49 @@ function EndHost:sendPendingMsgs()
 end
 
 function EndHost:changeRates()
-	    for flowNo, flow in ipairs(self.pendingChangeRate) do
-	    	-- queue.setRate(..)
-	    end
+   -- update next rate, changeTime for all queues
+   -- cases:
+   -- no current rate
+   -- or if new rate is smaller, simply update next rate, changeTime now
+   -- if new rate is bigger, see if there's a next rate scheduled
+   -- if no next rate or if next rate is smaller, update next rate, reset changeTime
+   -- or if next rate is bigger, update nextRate but don't changeTime   
+   
+   local now = dpdk.getTime()
+   for flowNo, rate in pairs(self.pendingChangeRate) do
+      local queueNo = self.queues[flowNo]
+      if queueNo ~= nil then
+	 print("Found queue " .. queueNo .. " for flow " .. flowNo)
+	 local rates = self.queueRates[queueNo]
+	 if rates == nil or rates.current < rate then
+	    rates = {}
+	    rates["current"] = nil
+	    rates["next"] = rate
+	    rates["changeTime"] = now
+	 elseif rates.next == nil or rates.next < rate then
+	    rates["next"] = rate
+	    rates["changeTime"] = now + 2
+	 else
+	    rates["next"] = rate
+	 end
+	 self.queueRates[queueNo] = rates
+      else
+	 print("No queue assigned for flow " .. flowNo)
+      end
+   end
+   self:updateRates(now)
+end
+
+function EndHost:updateRates(now)
+   for queueNo, rates in pairs(self.queueRates) do
+      if rates.changeTime ~= nil and rates.changeTime <= now then
+	 rates["current"] = rates["next"]
+	 rates["next"] = nil
+	 rates["changeTime"] = nil
+	 print("Updated rate of queue " .. queueNo .. " to " .. rates["current"])
+	 if (true) then self.dev:getTxQueue(queueNo):setRate(rates["current"]) end
+      end
+   end   
 end
 
 -- pendingFin, queues, freeQueues
@@ -142,7 +185,8 @@ function EndHost:handleNewFlows(msgs,  pipes)
 			   self.numPendingMsgs = self.numPendingMsgs + 1
 	        	   -- assign queue
 			   local queue = table.remove(self.freeQueues)
-	        	   self.queues[flowId] = {["queue"] = queue}
+	        	   self.queues[flowId] = queue
+			   print("Assigned queue " .. queue .. " to " .. flowId)
 			   -- tell data slave to start sending       
 			   local startDataMsg = msg
 			   msg["queue"]=queue
@@ -152,93 +196,96 @@ function EndHost:handleNewFlows(msgs,  pipes)
 end
 
 function EndHost:handleRxUpdates()
-	      	 for i = 1, self.rx do
-	      	      local buf = self.rxBufs[i]
+   for i = 1, self.rx do
+      local buf = self.rxBufs[i]
 
-		      local pkt = buf:getPercc1Packet()
-		      -- TODO(lav): I'd use ntoh just after rxing packet form network 
-		      -- and hton just before sending. Network byte is big endian
-		      -- and mules are little endian. But working fine without both..
-		      pkt.percc1:doNtoh()
+      local pkt = buf:getPercc1Packet()
+      -- TODO(lav): I'd use ntoh just after rxing packet form network 
+      -- and hton just before sending. Network byte is big endian
+      -- and mules are little endian. But working fine without both..
+      pkt.percc1:doNtoh()
 
-		      self.logFile:write("RECEIVE " .. pkt.percg:getString() .. " " .. pkt.percc1:getString() .. "\n")
+      self.logFile:write("RECEIVE " .. pkt.percg:getString() .. " " .. pkt.percc1:getString() .. "\n")
 
-		      local flowId = pkt.percg:getFlowId()
-		      if flowId == 0 then print("Unexpected flow id 0") end
+      local flowId = pkt.percg:getFlowId()
+      if flowId == 0 then print("Unexpected flow id 0") end
 
-		      if self.pendingMsgs[flowId] ~= nil then 
-		      	 print("we already have a pending msg for " .. flowId .. " ignore.")
-		      end
+      if self.pendingMsgs[flowId] ~= nil then 
+	 print("we already have a pending msg for " .. flowId .. " ignore.")
+      end
 
-		      if self.pendingMsgs[flowId] == nil then
-		      	 -- index into the received packet, to use for the
-		      	 -- next packet we send out (esp. for oldLabel, oldRate)
-		      	 self.pendingMsgs[flowId] = {["rxBufNo"] = i,
-			 			  ["rxFlowNo"] = flowId,
-						  ["rxNewLabel"] = pkt.percc1:getNewLabel(1),
-						  ["rxNewRate"] = pkt.percc1:getNewRate(1),
-						  ["rxNewLabel2"] = pkt.percc1:getNewLabel(2),
-						  ["rxNewRate2"] = pkt.percc1:getNewRate(2),
-						  ["rxIsForward"] = pkt.percc1:getIsForward(),
-						  ["rxIsExit"] = pkt.percc1:getIsExit(),
-						  ["rxMaxHops"] = pkt.percc1:getMaxHops(),
-						  ["rxHop"] = pkt.percc1:getHop(),
-		      			       ["other"]=pkt.percg:getSource()}
+      if self.pendingMsgs[flowId] == nil then
+	 -- index into the received packet, to use for the
+	 -- next packet we send out (esp. for oldLabel, oldRate)
+	 self.pendingMsgs[flowId] = {["rxBufNo"] = i,
+	    ["rxFlowNo"] = flowId,
+	    ["rxNewLabel"] = pkt.percc1:getNewLabel(1),
+	    ["rxNewRate"] = pkt.percc1:getNewRate(1),
+	    ["rxNewLabel2"] = pkt.percc1:getNewLabel(2),
+	    ["rxNewRate2"] = pkt.percc1:getNewRate(2),
+	    ["rxIsForward"] = pkt.percc1:getIsForward(),
+	    ["rxIsExit"] = pkt.percc1:getIsExit(),
+	    ["rxMaxHops"] = pkt.percc1:getMaxHops(),
+	    ["rxHop"] = pkt.percc1:getHop(),
+	    ["other"]=pkt.percg:getSource()}
 
-		      	 self.numPendingMsgs = self.numPendingMsgs + 1
+	 self.numPendingMsgs = self.numPendingMsgs + 1
 
-		      	 -- ingress processing for reverse packets
-		      	 if pkt.percc1:getIsForward() == percc1.IS_NOT_FORWARD then 
-		            --self.egressLink:processPercc1Packet(pkt)
-		      	 end
-		      
-			 -- this is how the control packets for a flow finish
-		      	 -- source send exit packet, destination replies with exit packet, end of flow.
-		      	 if pkt.percc1:getIsExit() == percc1.IS_EXIT
-		      	    and pkt.percc1:getIsForward() == percc1.IS_NOT_FORWARD then
-			    self.pendingMsgs[flowId] = nil
-			    self.numPendingMsgs = self.numPendingMsgs - 1
-		      	 end
+	 -- ingress processing for reverse packets
+	 if pkt.percc1:getIsForward() == percc1.IS_NOT_FORWARD then 
+	    --self.egressLink:processPercc1Packet(pkt)
+	 end
+	 
+	 -- this is how the control packets for a flow finish
+	 -- source send exit packet, destination replies with exit packet, end of flow.
+	 if pkt.percc1:getIsExit() == percc1.IS_EXIT
+	 and pkt.percc1:getIsForward() == percc1.IS_NOT_FORWARD then
+	    self.pendingMsgs[flowId] = nil
+	    self.numPendingMsgs = self.numPendingMsgs - 1
+	 end
 
-		      	 if self.pendingMsgs[flowId] ~= nil then
-		            -- the first maxHops entries in the agg and hostState
-			    -- arrays that were updated by intermediate hops
+	 if self.pendingMsgs[flowId] ~= nil then
+	    -- the first maxHops entries in the agg and hostState
+	    -- arrays that were updated by intermediate hops
 
-		            local maxHops = 0
-			    -- for forward packets, intermediate hops increment hop field
-			    if pkt.percc1:getIsForward() == percc1.IS_FORWARD then
-			       maxHops = pkt.percc1:getHop()
-			       else
-				-- for reverse packets, intermediate hops decrement hop field
-				-- but destination puts in the right value in maxHops field
-				maxHops = pkt.percc1:getMaxHops()
-			    end
+	    local maxHops = 0
+	    -- for forward packets, intermediate hops increment hop field
+	    if pkt.percc1:getIsForward() == percc1.IS_FORWARD then
+	       maxHops = pkt.percc1:getHop()
+	    else
+	       -- for reverse packets, intermediate hops decrement hop field
+	       -- but destination puts in the right value in maxHops field
+	       maxHops = pkt.percc1:getMaxHops()
+	    end
 
-			    -- calculate smallest and second smallest fair share rate
-			    -- and list of bottleneck links, to be used to fill in the
-			    -- next control packet we send out
-		      	    self.pendingMsgs[flowId]["bnInfo"] = pkt.percc1:getBottleneckInfo(maxHops)
-			    if pkt.percc1:getIsForward() == percc1.IS_NOT_FORWARD then
-			       local bnRate = self.pendingMsgs[flowId]["bnInfo"].bnRate1
-			       if self.rates[flowId] == nil then
-			       	  self.rates[flowId] = bnRate
-			       	  self.rateFile:write(flowId .. "," .. bnRate .. "\n")
-			       	  print("Flow " .. flowId .. " started with rate " .. bnRate .. " " .. pkt.percc1:getIsForwardString() .. " " .. pkt.percc1:getIsExitString())
-			       	  elseif bnRate ~= self.rates[flowId] then
-			       	     self.rates[flowId] = bnRate
-			       	     self.rateFile:write(flowId .. "," .. bnRate .. "\n")
-			       	     print("Flow " .. flowId .. " changed rate to " .. bnRate .. " " .. pkt.percc1:getIsForwardString() .. " " .. pkt.percc1:getIsExitString())
-			       end
-			    end			  
-		      	 end -- ends if pendingMsgs ~= nil
-		      end -- ends if pendingMsgs ~= nil
-	      	 end -- ends for i=1,rx
-
-	       if self.rx > 0 then  
-	       	  self.rxBufs:free(self.rx) 
-		  self.rx = 0
+	    -- calculate smallest and second smallest fair share rate
+	    -- and list of bottleneck links, to be used to fill in the
+	    -- next control packet we send out
+	    self.pendingMsgs[flowId]["bnInfo"] = pkt.percc1:getBottleneckInfo(maxHops)
+	    if pkt.percc1:getIsForward() == percc1.IS_NOT_FORWARD then
+	       local bnRate = self.pendingMsgs[flowId]["bnInfo"].bnRate1
+	       if self.rates[flowId] == nil then
+		  self.rates[flowId] = bnRate
+		  self.pendingChangeRate[flowId] = bnRate
+		  print("Added " .. flowId .. ": " .. bnRate .. " to pending change rates")
+		  self.rateFile:write(flowId .. "," .. bnRate .. "\n")
+		  print("Flow " .. flowId .. " started with rate " .. bnRate .. " " .. pkt.percc1:getIsForwardString() .. " " .. pkt.percc1:getIsExitString())
+	       elseif bnRate ~= self.rates[flowId] then
+		  self.rates[flowId] = bnRate
+		  print("Added " .. flowId .. ": " .. bnRate .. " to pending change rates")
+		  self.pendingChangeRate[flowId] = bnRate
+		  self.rateFile:write(flowId .. "," .. bnRate .. "\n")
+		  print("Flow " .. flowId .. " changed rate to " .. bnRate .. " " .. pkt.percc1:getIsForwardString() .. " " .. pkt.percc1:getIsExitString())
 	       end
+	    end			  
+	 end -- ends if pendingMsgs ~= nil
+      end -- ends if pendingMsgs ~= nil
+   end -- ends for i=1,rx
 
+   if self.rx > 0 then  
+      self.rxBufs:free(self.rx) 
+      self.rx = 0
+   end
 end
 
 function EndHost:updatePercControl(pkt, flowId, info)
