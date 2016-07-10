@@ -35,7 +35,8 @@ local EndHost = {
 EndHost.__index = EndHost
 
 function EndHost.new (mem, dev, id, PKT_SIZE)
-  local self = setmetatable({}, EndHost)
+   local self = setmetatable({}, EndHost)
+  self.txHexdumpFile = io.open("control-".. id .. "-txhexdump.txt", "a")
   self.logFile = io.open("control-".. id .. "-log.txt", "a")
   self.rateFile = io.open("control-".. id .. "-rates.txt", "a")
   self.txBufs = mem:bufArray(32)
@@ -103,14 +104,14 @@ function EndHost:sendPendingMsgs()
 
 		      self.logFile:write("SEND " .. pkt.percg:getString() .. " " .. pkt.percc1:getString() .. "\n")
 
-		      -- prints bytes to stdout (colorized)
+		      -- prints packet and dumps bytes to stdout (colorized)
 		      -- commented out, cuz maybe you don't want to see
 		      -- continous stream of packets sent in console
 		      -- rawPkt:dump(self.PKT_SIZE, io.stdout, true)
 		      
+		      -- prints packet and
 		      -- dumps bytes to log-file (not colorized)
-		      self.logFile:write("SEND (HexDump)")
-		      rawPkt:dump(self.PKT_SIZE, self.logFile, false)
+		      rawPkt:dump(self.PKT_SIZE, self.txHexdumpFile, false)
 		      -- see note about Ntoh
 		      pkt.percc1:doHton()
 		      bufNo = bufNo + 1
