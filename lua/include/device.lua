@@ -615,21 +615,8 @@ function txQueue:setRateMpps(rate, pktSize)
 	self:setRate(rate * (pktSize + 4) * 8)
 end
 
--- IXGBE_RTTBCNRC, IXGBE_RTTDT1C are DCB registers defined in intel/ixgbe/ixgbe_type.h
-local RF_X540_82599 = 0x00004984 
+local RF_X540_82599 = 0x00004984
 local RF_ENABLE_BIT = bit.lshift(1, 31)
-local IXGBE_RTTDT1C = 0x04908
-
-function txQueue:setTxPriorityRaw(priority)
-   -- from snabbswitch
-   -- (https://github.com/snabbco/snabb/blob/master/src/apps/intel/intel10g.lua)
-   priority = tonumber(priority) or 1.0
-   -- self.pf.r.RTTDT1C(bit.band(math.floor(priority * 0x80), 0x3FF))
-   -- select queue
-   dpdkc.write_reg32(self.id, RTTDQSEL, self.qid)
-   
-   return self
-end
 
 function txQueue:setTxRateRaw(rate, disable)
 	dpdkc.write_reg32(self.id, RTTDQSEL, self.qid)
