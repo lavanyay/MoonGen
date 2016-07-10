@@ -123,7 +123,7 @@ function percgHeader:getIsDataString()
 	local cleartext = ""
 	
 	if proto == percg.PROTO_CONTROL then
-		cleartext = "(CONTROL)"
+		cleartext = "(PERCC1)"
 	elseif proto == percg.PROTO_DATA then
 		cleartext = "(DATA)"
 	else
@@ -180,9 +180,8 @@ end
 
 -- Maps headers to respective protocol value.
 -- This list should be extended whenever a new protocol is added to 'PERCG constants'. 
-local mapNameProto = {
-      control = percg.PROTO_CONTROL,
-      data = percg.PROTO_DATA,
+local mapNameType = {
+      percc1= percg.PROTO_CONTROL,
 }
 
 --- Resolve which header comes after this one (in a packet).
@@ -192,7 +191,7 @@ local mapNameProto = {
 --- @return String next header (e.g. 'udp', 'icmp', nil)
 function percgHeader:resolveNextHeader()
 	local proto = self:getIsData()
-	for name, _proto in pairs(mapNameProto) do
+	for name, _proto in pairs(mapNameType) do
 		if proto == _proto then
 			return name
 		end
@@ -213,18 +212,23 @@ end
 function percgHeader:setDefaultNamedArgs(pre, namedArgs, nextHeader, accumulatedLength)
 	-- TODO(lav): not sure if this is relevant to PERCG
 	-- set length
-	-- if not namedArgs[pre .. "Length"] and namedArgs["pktLength"] then
-	--	namedArgs[pre .. "Length"] = namedArgs["pktLength"] - accumulatedLength
-	-- end
+	if not namedArgs[pre .. "Length"] and namedArgs["pktLength"] then
+		namedArgs[pre .. "Length"] = namedArgs["pktLength"] - accumulatedLength
+	end
 	
 	-- set protocol
 	if not namedArgs[pre .. "IsData"] then
-		for name, type in pairs(mapNameProto) do
+		for name, type in pairs(mapNameType) do
 			if nextHeader == name then
 				namedArgs[pre .. "IsData"] = type
 				break
 			end
 		end
+		-- didn't match any of matched type, must be just payload
+		if not namedArgs[pre .. "IsData"] then
+		   namedArgs[pre .. "IsData"] = percg.PROTO_DATA
+		end
+
 	end
 	return namedArgs
 end

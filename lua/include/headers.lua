@@ -100,7 +100,7 @@ ffi.cdef[[
 		union ip4_address	dst;
 	 };
 
-#pragma pack(push)    
+#pragma pack(push)
     #pragma pack(1)
     struct percg_header {
             uint16_t        preamble;
@@ -118,7 +118,7 @@ ffi.cdef[[
           uint8_t bos;
     };
     
-    struct percc1_agg {          
+    struct  percc1_agg {          
           uint32_t linkCapacity;
           uint32_t sumSat;
           uint32_t numSat;
@@ -126,7 +126,7 @@ ffi.cdef[[
           uint8_t bos;
     };
 
-    struct percc1_header {
+    struct  percc1_header {
             uint8_t            isExit;
         uint8_t         isForward;
         uint8_t            hop;
@@ -137,7 +137,6 @@ ffi.cdef[[
         struct percc1_agg        agg2;        
     };
 #pragma pack(pop)
-
 	struct __attribute__((__packed__)) ip6_header {
 		uint32_t 		vtf;
 		uint16_t  		len;

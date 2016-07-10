@@ -75,6 +75,7 @@ function EndHost:sendPendingMsgs()
 	       local bufNo = 1
 
 	       for flowId, info in pairs(self.pendingMsgs) do
+		   local rawPkt = self.txBufs[bufNo]
 	       	   local pkt = self.txBufs[bufNo]:getPercc1Packet()
 
 		   local sanity = true
@@ -102,6 +103,14 @@ function EndHost:sendPendingMsgs()
 
 		      self.logFile:write("SEND " .. pkt.percg:getString() .. " " .. pkt.percc1:getString() .. "\n")
 
+		      -- prints bytes to stdout (colorized)
+		      -- commented out, cuz maybe you don't want to see
+		      -- continous stream of packets sent in console
+		      -- rawPkt:dump(self.PKT_SIZE, io.stdout, true)
+		      
+		      -- dumps bytes to log-file (not colorized)
+		      self.logFile:write("SEND (HexDump)")
+		      rawPkt:dump(self.PKT_SIZE, self.logFile, false)
 		      -- see note about Ntoh
 		      pkt.percc1:doHton()
 		      bufNo = bufNo + 1

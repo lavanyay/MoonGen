@@ -668,6 +668,12 @@ end
 --- @return Table of namedArgs
 --- @see percc1Header:fill
 function percc1Header:setDefaultNamedArgs(pre, namedArgs, nextHeader, accumulatedLength)
+	-- TODO(lav): not sure if this is relevant to PERCC1
+	-- set length
+	if not namedArgs[pre .. "Length"] and namedArgs["pktLength"] then
+		namedArgs[pre .. "Length"] = namedArgs["pktLength"] - accumulatedLength
+	end
+
 	return namedArgs
 end
 
