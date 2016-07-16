@@ -11,6 +11,8 @@ local percc1 = require "proto.percc1"
 local eth = require "proto.ethernet"
 local pcap = require "pcap"
 
+local ipc = require "examples.perc.ipc"
+
 local Link = require "examples.perc.perc_link"
 local EndHost = require "examples.perc.end_host"
 
@@ -52,9 +54,9 @@ function master(...)
 	 if (numLinksUp == 2) then 
 	    dpdk.setRuntime(1000)
 
-	    local pipesTxDev = getInterVmPipes()
-	    local pipesRxDev = getInterVmPipes() 
-	    local readyPipes = getReadyPipes(3) -- control and application on dev0, control on dev1
+	    local pipesTxDev = ipc.getInterVmPipes()
+	    local pipesRxDev = ipc.getInterVmPipes() 
+	    local readyPipes = ipc.getReadyPipes(3) -- control and application on dev0, control on dev1
 
 	    dpdk.launchLuaOnCore(core1, "loadControlSlave", txDev, pipesTxDev, {["pipes"]= readyPipes, ["id"]=1})
 	    dpdk.launchLuaOnCore(core2, "loadControlSlave", rxDev, pipesRxDev, {["pipes"]= readyPipes, ["id"]=2})
@@ -65,117 +67,91 @@ function master(...)
 	 end
 end
 
-function getInterVmPipes()
-	 local pipes =  {
-	 	 ["pipeFlowStart"] = pipe.newSlowPipe(),
-	 	 ["pipeFlowCompletions1"] = pipe.newSlowPipe(),
-		 ["pipeFlowCompletions2"] = pipe.newSlowPipe(),
-		 ["pipeFlowStartData"] = pipe.newSlowPipe()
-	 }
 
-	 return pipes
+
+
+function startNewFlow(newFlowId, active, pipes)
+   table.insert(active, newFlowId)
+   ipc.sendFacStartMsg(pipes, newFlowId, 3)
+   -- local facStartMsg = ipc.getFacStartMsg(newFlowId, 3)
+   
+   -- print("created cdata object of type fac_start_t with flow "
+   --	    .. facStartMsg[0].flow .. ", destination "
+   --	    .. facStartMsg[0].destination .. "\n")
+   
+   --ipc.sendMsgs(pipes, "fastPipeAppToControlStart",
+   --		{["flow"] = tostring(newFlowId), ["destination"]="3"})
 end
 
-function getReadyPipes(numParticipants)
-	 -- Setup pipes that slaves use to figure out when all are ready
-	 local readyPipes = {}
-	 local i = 1
-	 while i <= numParticipants do
-	       readyPipes[i] = pipe.newSlowPipe()
-	       i = i + 1
-	       end
-	 return readyPipes
-end
-
-function waitTillReady(readyInfo)
-	 -- tell others we're ready and check if others are ready
-	 local myPipe = readyInfo.pipes[readyInfo.id]
-	 if myPipe ~= nil then	 	 
-	    	 -- tell others I'm ready  
-	 	 for pipeNum,pipe in ipairs(readyInfo.pipes) do
-	 	     if pipeNum ~= readyInfo.id then 
-	 	     	pipe:send({["1"]=pipeNum})
-	 	 	end
-	 	     pipeNum = pipeNum + 1
-	 	 end
-	
-		 local numPipes = table.getn(readyInfo.pipes)
-
-		 -- busy wait till others are ready
-	 	 local numReadyMsgs = 0	 
-	 	 while numReadyMsgs < numPipes-1 do
-	 	       if myPipe:recv() ~= nil then 
-	 	       	  numReadyMsgs = numReadyMsgs + 1
-	 	 	  end
-	 	       end
-
-	 	 print("Received " .. numReadyMsgs .. " ready messages on pipe # " .. readyInfo.id)
-		 end
+function endOldFlow(active, pipes)
+   local removeFlowId = table.remove(active)
+   ipc.sendFacEndMsg(pipes, removeFlowId)
+   return removeFlowId
 end
 
 function loadApplicationSlave2(pipes, readyInfo)
    local thisCore = dpdk.getCore()
-   print("Running application slave on core " .. thisCore)
+   print("Running application slave on core " .. thisCore)   
+   ipc.waitTillReady(readyInfo)
+   local lastSentTime = dpdk.getTime()
+   local newFlowId = 100
+   local active = {}
+   local interval = 1
+   local workload = {1, -1, 1, 1, 1, -1, 1, -1}
+   local seqNo = 1
+   local numFlows = 0
+   local activeFlows = {}
+   local numActiveFlows = 0
    
-   waitTillReady(readyInfo)
+   local now = 0
+   while dpdk.running() do
+      now = dpdk.getTime()
 
-         local lastSentTime = dpdk.getTime()
-
-	 local newFlowId = 100
-
-	 local active = {}
-	 local answer
-	 local done = false
-	 while dpdk.running() and done == false do
-	 
-	  if dpdk.getTime() > lastSentTime + 1 then
-	   io.write("start a new flow (y/n)? ")
-	   io.flush()
-	   answer=io.read()
-           if answer == "y" then
-	      print("Starting new flow " .. newFlowId)
-	      table.insert(active, newFlowId)
-	      local nextFlowMsg = {["flow"] = tostring(newFlowId), ["destination"]="3",
-	      		       	   ["flowEvent"] = {}}
-	      sendMsgs(pipes, "pipeFlowStart", nextFlowMsg)
-	      lastSentTime = dpdk.getTime()
-	      newFlowId = newFlowId + 1
-	      elseif answer == "n" then
-               local removeFlowId = table.remove(active)
-	       print("Removing flow " .. removeFlowId)
-	       local stopFlowMsg = {["flow"] = tostring(removeFlowId)}
-	       sendMsgs(pipes, "pipeFlowCompletions1", stopFlowMsg)
-	       lastSentTime = dpdk.getTime()
-	      elseif answer == "quit" then
-	       done = true
-	   end
-	  end
-	 end
-
-end
-
-
--- prints times when msg was put on different queues and FCT
-function printFlowEvent(flowEvent) 
-     local eventsByName = flowEvent
-     local eventsByTime = {}
-     local times = {}		     
-
-     for pipeName, times in pairs(flowEvent) do
-     	 local waitTime
-     	 if times.accept ~= nil and times.send ~= nil then
-	    waitTime = times.accept - times.send
-	    else waitTime = nil
+      local msgs = ipc.acceptMsgs(pipes, "slowPipeControlToApp")
+      if next(msgs) ~= nil then
+	 for msgNo, msg in pairs(msgs) do
+	    print(msg["now"] .. ": " .. msg["msg"])
+	    if string.find(msg["msg"], "rate") ~= nil then
+	       local flow, rate
+		  = msg["msg"]:match("updated rate of flow (%d+) to (%d+)")
+	       assert(flow ~= nil)	       
+	       if not activeFlows[flow] then
+		  activeFlows[flow] = true
+		  numActiveFlows = numActiveFlows + 1
+	       end
+	    else
+	       local flow = msg["msg"]:match("control end flow (%d+)")
+	       assert(flow ~= nil)	       
+	       assert(activeFlows[flow] ~= nil)
+	       activeFlows[flow] = nil
+	       numActiveFlows = numActiveFlows - 1
 	    end
-     	 --print(tostring(pipeName) .. ": sent at " .. tostring(times.send) .. " ms, waited for " .. tostring(waitTime) .. " ms.")
+	    print(" numActiveFlows: " .. numActiveFlows)
 	 end
+      end
+      
+      if dpdk.getTime() > lastSentTime + interval and workload[seqNo] ~= nil
+      and numActiveFlows == numFlows then
+	 numFlows = numFlows + workload[seqNo]
+	 assert(numFlows >= 0)	 
+	 if workload[seqNo] > 0 then
+	    startNewFlow(newFlowId,active, pipes)
+	    print(now .. ": add " .. newFlowId
+		     .. ", new # flows: " .. numFlows .. "\n")
+	    newFlowId = newFlowId+1
+	 else
+	    removeFlowId = endOldFlow(active, pipes)
+	    print(now .. ": remove " .. removeFlowId
+		     .. ", new # flows: " .. numFlows .. "\n")
 
-     if flowEvent.pipeFlowStart.send ~= nil and flowEvent.pipeFlowCompletions2.accept ~= nil then
-     	local fct = flowEvent.pipeFlowCompletions2.accept - flowEvent.pipeFlowStart.send
-     	print("FlowCompletionTime .. " .. tostring(fct) .. " ms")
-	print("StartTime .. " .. tostring(flowEvent.pipeFlowStart.send*1000) .. " us")
-	end
+	 end
+	 seqNo = seqNo + 1
+	 lastSentTime = dpdk.getTime()     
+      end
+   end
 end
+
+
 
 
 -- handles flow start messages from applications - to send first control, assign a free queue for data
@@ -207,28 +183,29 @@ function loadControlSlave(dev, pipes, readyInfo)
 			ethType = eth.TYPE_PERCG
 		}
 	end)
-	endHost = EndHost.new(mem, dev, readyInfo.id, PKT_SIZE) 
-	waitTillReady(readyInfo)
+	endHost = EndHost.new(mem, dev, readyInfo.id, pipes, PKT_SIZE) 
+	ipc.waitTillReady(readyInfo)
 
 	while dpdk.running() do		      
 	      dpdk.sleepMillis(1000)
 	      endHost:resetPendingMsgs()
 
 	      -- Handle updates on rx queue	     
-	      if endHost:tryRecv() > 0 then 
+	      if endHost:tryRecv() > 0 then
 	         --print("handle " .. endHost.rx .. " updates on rx queue") 
-	      	 endHost:handleRxUpdates() 
+	      	 endHost:handleRxUpdates(dpdk.getTime()) 
 	      end	
 
 	      -- Handle new flow updates
-	      local msgs = acceptMsgs(pipes, "pipeFlowStart")
+	      local msgs = ipc.acceptFacStartMsgs(pipes)
+	      --, "fastPipeAppToControlStart")
 	      if next(msgs) ~= nil then 
 	         --print("handle " .. #msgs .. " updates on pipe flow start") 
 	      	 endHost:handleNewFlows(msgs,  pipes)  
 	      end
 
 	      -- Handle flow completion updates ..
-	      local msgs = acceptMsgs(pipes, "pipeFlowCompletions1")
+	      local msgs = ipc.acceptFacEndMsgs(pipes)
 	      if next(msgs) ~= nil then 
 	         --print("handle " .. #msgs .. " updates on pipe flow completions") 
 	      	 endHost:handleFlowCompletions(msgs) 
@@ -237,7 +214,7 @@ function loadControlSlave(dev, pipes, readyInfo)
 	      -- Send control packets in response to rx/ new flow updates
 	      if endHost.numPendingMsgs > 0 then
 	         --print("send " .. endHost.numPendingMsgs .. " pending messages") 
-	      	 endHost:sendPendingMsgs() 
+	      	 endHost:sendPendingMsgs(dpdk.getTime()) 
 	      end
 	      endHost:changeRates()
 	end -- ends while
@@ -245,42 +222,6 @@ function loadControlSlave(dev, pipes, readyInfo)
 end
 
 
-function sendMsgs(pipes, pipeName, msg)	 
-	 -- update send time for this pipe in msg.flowEvent.
-	 -- and can turn off logging
-	 if msg.flowEvent ~= nil and msg.flowEvent[pipeName] ~= nil then
-	    local timeMs = dpdk.getTime()*1000
-	    msg.flowEvent[pipeName]["send"] = timeMs	    
-	  end
-	  pipes[pipeName]:send(msg)
-
-end
-
-function acceptMsgs(pipes, pipeName) 
-	if pipes == nil or pipes[pipeName] == nil then
-	   --print("acceptMsgs on nil pipe! return!!")
-	   return
-	end 
-
-	local pipe = pipes[pipeName]
-	local numMsgs = pipe:count()
-	if numMsgs ~= 0 then
-	   --print(tostring(numMsgs) .. " msgs on pipe " .. pipeName)	
-	   end
-	local msgs = {}
-	while numMsgs > 0 do
-	      local msg = pipe:recv()
-	      if msg.flowEvent ~= nil and msg.flowEvent[pipeName] ~= nil then
-	      	 --print("Accepted msg on " .. tostring(pipeName) .. " for flow " .. tostring(msg.flow))
-	      	 local timeMs = dpdk.getTime()*1000
-	    	 msg.flowEvent[pipeName]["accept"] = timeMs
-	    	 end
-	      msgs[numMsgs] = msg
-	      --print("Got msg # " .. tostring(numMsgs) .. " for flow " .. tostring(msg.flow) .. " on pipe " .. pipeName)
-	      numMsgs = numMsgs - 1
-        end
-	return msgs
-end	 
 
 function loadTxDataSlave(dev, controlQueue, pipes, readyInfo)
         local setupStartTimeUs = dpdk.getTime() * 10e6
@@ -294,7 +235,7 @@ function loadTxDataSlave(dev, controlQueue, pipes, readyInfo)
 
 	local setupEndTimeUs = dpdk.getTime() * 10e6
 	 -- tell others we're ready and check if others are ready
-	 waitTillReady(readyInfo)
+	 ipc.waitTillReady(readyInfo)
 
         local setupReadyTimeUs = dpdk.getTime() * 10e6
 
@@ -316,56 +257,59 @@ function loadTxDataSlave(dev, controlQueue, pipes, readyInfo)
 
 	
 	local i = 0
-	while dpdk.running() do	
-	      -- TODO(lav): could be lazy about this?
-	      local msgs = acceptMsgs(pipes, "pipeFlowStartData")
-	      if next(msgs) ~= nil then
-	         for msgNo, msg in pairs(msgs) do
-		    print("Adding queue " .. tostring(msg.queue) .. " for flow " .. tostring(msg.flow) .. " to queues")
-	  	    flowMsgs[msg.flow] = msg
-		    flowSize[msg.flow] = msg.size
-		    queues[msg.flow] = msg.queue
-		    table.insert(flowsList, msg.flow)			 
-		    end		
-		  end -- ends if next(msgs)..
+	while dpdk.running() do
+	   local now = dpdk.getTime()
+	   -- TODO(lav): could be lazy about this?
+	   local msgs = ipc.acceptFcdStartMsgs(pipes)
+	   if next(msgs) ~= nil then
+	      for msgNo, msg in pairs(msgs) do
+		 print("Adding queue " .. tostring(msg.queue) .. " for flow " .. tostring(msg.flow) .. " to queues")
+		 flowMsgs[msg.flow] = msg
+		 flowSize[msg.flow] = msg.size
+		 queues[msg.flow] = msg.queue
+		 table.insert(flowsList, msg.flow)			 
+	      end		
+	   end -- ends if next(msgs)..
 		  
-	      -- put data packets on queue for each active flow	     
-	      for flow, queueNo in pairs(queues) do	      	  
-		  local numPacketsLeft = flowSize[flow]
-		  --print(tostring(numPacketsLeft) .. " packets left for flow " .. flow)
-		  if numPacketsLeft > 128 then
-		      bufs:alloc(PKT_SIZE) 
-		      flowSize[flow] = flowSize[flow] - 128
-		      else
-		      bufs:allocN(PKT_SIZE, numPacketsLeft) 
-		      flowSize[flow] = flowSize[flow] - numPacketsLeft
-		      table.insert(pendingFlowCompletions, flow)
-		      end
+	   -- put data packets on queue for each active flow	     
+	   for flow, queueNo in pairs(queues) do	      	  
+	      local numPacketsLeft = flowSize[flow]
+	      --print(tostring(numPacketsLeft) .. " packets left for flow " .. flow)
+	      if numPacketsLeft > 128 then
+		 bufs:alloc(PKT_SIZE) 
+		 flowSize[flow] = flowSize[flow] - 128
+	      else
+		 bufs:allocN(PKT_SIZE, numPacketsLeft) 
+		 flowSize[flow] = flowSize[flow] - numPacketsLeft
+		 table.insert(pendingFlowCompletions, flow)
+	      end
 		      
-		   -- TODO(lav): or pre-allocate buffers per queue?
-		   local queue = dev:getTxQueue(queueNo)
-		   for _, buf in ipairs(bufs) do
-			local pkt = buf:getPercgPacket()
-			pkt.percg:setFlowId(tonumber(flow))
-			pkt.eth.src:set(queueNo)
-			end		    
-		    print("sending packets of flow " .. tostring(flow))
-		    queue:send(bufs)
-		    ctr:update()
-	      	  end
+	      -- TODO(lav): or pre-allocate buffers per queue?
+	      local queue = dev:getTxQueue(queueNo)
+	      for _, buf in ipairs(bufs) do
+		 local pkt = buf:getPercgPacket()
+		 pkt.percg:setFlowId(tonumber(flow))
+		 pkt.eth.src:set(queueNo)
+	      end		    
+	      print("sending packets of flow " .. tostring(flow))
+	      queue:send(bufs)
+	      ctr:update()
+	   end
 	      
-	      if next(pendingFlowCompletions) ~= nil then
-	      	 for flow, flowNum in pairs(pendingFlowCompletions) do
-		         flowSize[flow] = nil
-		         queues[flow] = nil
-			 local msg = flowMsgs[flowNum]
-			 sendMsgs(pipes, "pipeFlowCompletions1", msg)
-			 sendMsgs(pipes, "pipeFlowCompletions2", msg)
-		     	 end
-		  pendingFlowCompletions = {}
-	          end
-
-	      i = i + 1
+	   if next(pendingFlowCompletions) ~= nil then
+	      for flow, flowNum in pairs(pendingFlowCompletions) do
+		 flowSize[flow] = nil
+		 queues[flow] = nil
+		 local msg = flowMsgs[flowNum]
+		 --sendMsgs(pipes, "appToData", msg)
+		 ipc.sendMsgs(pipes, "slowPipeControlToApp",
+			      {["msg"] = ("end flow " .. flowNum),
+				 ["now"] = now})
+	      end
+	      pendingFlowCompletions = {}
+	   end
+	   
+	   i = i + 1
 	end
 	ctr:finalize()
 end
