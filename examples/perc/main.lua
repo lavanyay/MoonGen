@@ -72,7 +72,7 @@ end
 
 function startNewFlow(newFlowId, active, pipes)
    table.insert(active, newFlowId)
-   ipc.sendFacStartMsg(pipes, newFlowId, 3)
+   ipc.sendFacStartMsg(pipes, newFlowId, 2)
    -- local facStartMsg = ipc.getFacStartMsg(newFlowId, 3)
    
    -- print("created cdata object of type fac_start_t with flow "
@@ -85,6 +85,8 @@ end
 
 function endOldFlow(active, pipes)
    local removeFlowId = table.remove(active)
+   --	    .. ", new # flows: " .. numFlows .. "\n")
+
    ipc.sendFacEndMsg(pipes, removeFlowId)
    return removeFlowId
 end
@@ -187,7 +189,7 @@ function loadControlSlave(dev, pipes, readyInfo)
 	ipc.waitTillReady(readyInfo)
 
 	while dpdk.running() do		      
-	      dpdk.sleepMillis(1000)
+	      --dpdk.sleepMillis(1000)
 	      endHost:resetPendingMsgs()
 
 	      -- Handle updates on rx queue	     

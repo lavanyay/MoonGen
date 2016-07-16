@@ -411,12 +411,35 @@ end
 
 --- Device-based counter
 function txCounter:update()
-	local time = dpdk.getTime()
-	if self.lastUpdate and time <= self.lastUpdate + 1 then
-		return
-	end
-	local pkts, bytes = self:getThroughput()
-	updateCounter(self, time, pkts, bytes)
+   local time = dpdk.getTime()
+   -- default update every 1 second
+   -- rate changes every RTT say 12us.. changing rate will take some time (how long?)
+   -- can only put 10 packets on a 10 GB link in one 12us round trip
+   -- first need to make sure not putting more than BDP of packets every RTT .. else queues   
+   -- how to get time when packet leaves NIC??
+   -- get this time for 100-1000 consecutive packets
+   -- while you change rate every 12-120 us
+   -- maybe also get time for when the packets arrive at receiver
+   -- then plot departure time vs packet number
+   -- also can calculate ideal departure time vs packet number based on when rates changed to what
+
+   -- so more than throughput we're looking at packet arrival/ departure times
+   -- could also look at throughput but on the order of packets received every 12us..
+   -- getting time from CPU itself might take some time (how long?) .. not sure
+   -- and printing it on screen vs just storing in memory (how long?)
+
+   -- so first maybe look at send throughput (where send = sayings bufs.send)
+   -- time for getting time, printing on screen vs storing, updating counter etc.
+
+   -- then look into NIC timestamps for packets
+   -- maybe helps to ask SENIC people
+   -- "To measure how well traffic
+   -- is paced, we use hardware packet sniffer at the receiver"
+   if self.lastUpdate and time <= self.lastUpdate + 1 then
+      return
+   end
+   local pkts, bytes = self:getThroughput()
+   updateCounter(self, time, pkts, bytes)
 end
 
 --- Get accumulated statistics.
