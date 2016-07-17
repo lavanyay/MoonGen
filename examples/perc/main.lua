@@ -188,14 +188,19 @@ function loadControlSlave(dev, pipes, readyInfo)
 	endHost = EndHost.new(mem, dev, readyInfo.id, pipes, PKT_SIZE) 
 	ipc.waitTillReady(readyInfo)
 
+	local lastRxTime = 0
+	local lastTxTime = 0
 	while dpdk.running() do		      
 	      --dpdk.sleepMillis(1000)
 	      endHost:resetPendingMsgs()
 
 	      -- Handle updates on rx queue	     
 	      if endHost:tryRecv() > 0 then
-	         --print("handle " .. endHost.rx .. " updates on rx queue") 
-	      	 endHost:handleRxUpdates(dpdk.getTime()) 
+		 local rxTime = dpdk.getTime()
+	         --print(endHost.rx .. " updates on rx queue in "
+		 --	  .. ((rxTime - lastRxTime)*1e6) .. " us") 
+	      	 endHost:handleRxUpdates(rxTime)
+		 lastRxTime = rxTime
 	      end	
 
 	      -- Handle new flow updates
@@ -203,7 +208,7 @@ function loadControlSlave(dev, pipes, readyInfo)
 	      --, "fastPipeAppToControlStart")
 	      if next(msgs) ~= nil then 
 	         --print("handle " .. #msgs .. " updates on pipe flow start") 
-	      	 endHost:handleNewFlows(msgs,  pipes)  
+	      	 endHost:handleNewFlows(msgs,  dpdk.getTime())  
 	      end
 
 	      -- Handle flow completion updates ..
@@ -215,8 +220,12 @@ function loadControlSlave(dev, pipes, readyInfo)
 
 	      -- Send control packets in response to rx/ new flow updates
 	      if endHost.numPendingMsgs > 0 then
-	         --print("send " .. endHost.numPendingMsgs .. " pending messages") 
-	      	 endHost:sendPendingMsgs(dpdk.getTime()) 
+		 local txTime = dpdk.getTime()
+	      	 endHost:sendPendingMsgs(txTime)
+		 --print("sent " .. endHost.numPendingMsgs
+	         --		  .. " on tx queue in last " 
+		 --	  .. ((txTime - lastTxTime)*1e6) .. " us")
+		 lastTxTime = txTime
 	      end
 	      endHost:changeRates()
 	end -- ends while

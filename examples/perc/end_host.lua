@@ -77,11 +77,10 @@ function EndHost:tryRecv()
 	 return rx
 end
 
-function EndHost:sendPendingMsgs()
+function EndHost:sendPendingMsgs(now)
    self.txBufs:allocN(self.PKT_SIZE, self.numPendingMsgs)
    local bufNo = 1
 
-   local now = dpdk.getTime()
    for flowId, info in pairs(self.pendingMsgs) do
       local rawPkt = self.txBufs[bufNo]
       local pkt = self.txBufs[bufNo]:getPercc1Packet()
@@ -89,8 +88,7 @@ function EndHost:sendPendingMsgs()
       assert(info.rxFlowNo == nil or flowId == info.rxFlowNo)
       if true then
 	 -- update perc generic header
-	 self:updatePercGeneric(pkt, flowId, info, now)
-	 
+	 self:updatePercGeneric(pkt, flowId, info, now)	 
 	 -- update percc1 control header fields
 	 self:updatePercControl(pkt, flowId, info, now)
 		   
@@ -99,7 +97,24 @@ function EndHost:sendPendingMsgs()
 	    --self.egressLink:processPercc1Packet(pkt)
 	 end		   
 
-	 self.logFile:write("SEND " .. pkt.percg:getString() .. " " .. pkt.percc1:getString() .. "\n")
+	 local timeDiff = 0
+	 if (info.rxTime ~= nil and now ~= nil) then
+	    timeDiff = (now - info.rxTime)*1e6
+	 end
+
+	 -- stats of time between read new flow updates from app and start of tx
+	 -- grep SEND control-1-log.txt | grep "maxHops 0" | cut -d' ' -f3 | Rscript -e 'summary (as.numeric (readLines ("stdin")))'
+
+	 -- stats of time between start of rx and start of tx
+	 -- grep SEND control-1-log.txt | cut -d' ' -f3 | Rscript -e 'summary (as.numeric (readLines ("stdin")))'
+
+	 -- TODO(lav): find out
+	 -- hmm.. what causes max 500us etc. gaps?
+	 -- what's typical gap between application sends new flow update
+	 -- and start of tx
+	 self.logFile:write("SEND [ " .. timeDiff .. " us]"
+			       .. pkt.percg:getString()
+			       .. " " .. pkt.percc1:getString() .. "\n")
 
 		      -- prints packet and dumps bytes to stdout (colorized)
 		      -- commented out, cuz maybe you don't want to see
@@ -188,7 +203,7 @@ function EndHost:handleFlowCompletions(msgs)
 end
 
 -- pendingMsgs, freeQueues, queues,
-function EndHost:handleNewFlows(msgs)
+function EndHost:handleNewFlows(msgs, now)
    --print("handle new flows")
    for msgNo, msg in pairs(msgs) do
       local flowId = msg.flow
@@ -197,7 +212,8 @@ function EndHost:handleNewFlows(msgs)
 	 assert(self.pendingMsgs[flowId] == nil)
 	
 	 -- log pending message
-	 self.pendingMsgs[flowId] = {["other"]=msg.destination}
+	 self.pendingMsgs[flowId] = {["other"]=msg.destination,
+	    ["rxTime"]=now}
 	 
 	 self.numPendingMsgs = self.numPendingMsgs + 1
 	 -- assign queue
@@ -242,6 +258,7 @@ function EndHost:handleRxUpdates(now)
 	 -- index into the received packet, to use for the
 	 -- next packet we send out (esp. for oldLabel, oldRate)
 	 self.pendingMsgs[flowId] = {
+	    ["rxTime"] = now,
 	    ["rxBufNo"] = i,
 	    ["rxFlowNo"] = flowId,
 	    ["rxNewLabel"] = pkt.percc1:getNewLabel(1),
