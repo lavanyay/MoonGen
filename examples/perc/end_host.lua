@@ -112,7 +112,7 @@ function EndHost:sendPendingMsgs(now)
 	 -- hmm.. what causes max 500us etc. gaps?
 	 -- what's typical gap between application sends new flow update
 	 -- and start of tx
-	 self.logFile:write("SEND [ " .. timeDiff .. " us]"
+	 self.logFile:write("SEND [ " .. tostring(timeDiff) .. " us]"
 			       .. pkt.percg:getString()
 			       .. " " .. pkt.percc1:getString() .. "\n")
 
@@ -213,7 +213,7 @@ function EndHost:handleNewFlows(msgs, now)
 	
 	 -- log pending message
 	 self.pendingMsgs[flowId] = {["other"]=msg.destination,
-	    ["rxTime"]=now}
+	    ["rxTime"]=msg.startTime}
 	 
 	 self.numPendingMsgs = self.numPendingMsgs + 1
 	 -- assign queue

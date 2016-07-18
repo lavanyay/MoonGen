@@ -1,10 +1,10 @@
 local ffi = require("ffi")
 local pipe		= require "pipe"
 
-mod = {}
+ipcMod = {}
 
 ffi.cdef[[
-typedef struct { int flow, destination; } facStartMsg;  
+typedef struct { int flow, destination; double startTime;} facStartMsg;  
 typedef struct { int flow, destination, queue; } fcdStartMsg;  
 typedef struct { int flow; } facEndMsg;  
 typedef facStartMsg* pFacStartMsg;
@@ -14,51 +14,51 @@ typedef facEndMsg* pFacEndMsg;
 ]]
 
 
-function mod.sendFacStartMsg(pipes, flow, destination)
+function ipcMod.sendFacStartMsg(pipes, flow, destination, startTime)
    local msg = ffi.new("facStartMsg[?]", 1)
    msg[0].flow = flow
    msg[0].destination = destination
-
-   mod.sendMsgs(pipes, "fastPipeAppToControlStart", msg)
+   msg[0].startTime = startTime
+   ipcMod.sendMsgs(pipes, "fastPipeAppToControlStart", msg)
    --return msg
 end
 
-function mod.sendFcdStartMsg(pipes, flow, destination, queue)
+function ipcMod.sendFcdStartMsg(pipes, flow, destination, queue)
    local msg = ffi.new("fcdStartMsg[?]", 1)
    msg[0].flow = flow
    msg[0].destination = destination
    msg[0].queue = queue
-   mod.sendMsgs(pipes, "fastPipeControlToDataStart", msg)
+   ipcMod.sendMsgs(pipes, "fastPipeControlToDataStart", msg)
    --return msg
 end
 
-function mod.sendFacEndMsg(pipes, flow)
+function ipcMod.sendFacEndMsg(pipes, flow)
    local msg = ffi.new("facEndMsg[?]", 1)
    msg[0].flow = flow
-   mod.sendMsgs(pipes, "fastPipeAppToControlEnd", msg)
+   ipcMod.sendMsgs(pipes, "fastPipeAppToControlEnd", msg)
    --return msg
 end
 
-function mod.acceptFacStartMsgs(pipes)
-   return mod.acceptMsgs(pipes, "fastPipeAppToControlStart", "pFacStartMsg")
+function ipcMod.acceptFacStartMsgs(pipes)
+   return ipcMod.acceptMsgs(pipes, "fastPipeAppToControlStart", "pFacStartMsg")
 end
 
-function mod.acceptFcdStartMsgs(pipes)
-   return mod.acceptMsgs(pipes, "fastPipeControlToDataStart", "pFcdStartMsg")
+function ipcMod.acceptFcdStartMsgs(pipes)
+   return ipcMod.acceptMsgs(pipes, "fastPipeControlToDataStart", "pFcdStartMsg")
 end
 
-function mod.acceptFacEndMsgs(pipes)
-   return mod.acceptMsgs(pipes, "fastPipeAppToControlEnd", "pFacEndMsg")
+function ipcMod.acceptFacEndMsgs(pipes)
+   return ipcMod.acceptMsgs(pipes, "fastPipeAppToControlEnd", "pFacEndMsg")
 end
 
 
-function mod.sendMsgs(pipes, pipeName, msg)	 
+function ipcMod.sendMsgs(pipes, pipeName, msg)	 
 	 -- update send time for this pipe in msg.flowEvent.
 	 -- and can turn off logging
    pipes[pipeName]:send(msg)
 end
 
-function mod.acceptMsgs(pipes, pipeName, msgType)
+function ipcMod.acceptMsgs(pipes, pipeName, msgType)
    if pipes == nil or pipes[pipeName] == nil then
       print("acceptMsgs on nil pipe! return!!")
       return
@@ -82,7 +82,7 @@ function mod.acceptMsgs(pipes, pipeName, msgType)
    return msgs
 end	 
 
-function mod.getInterVmPipes()
+function ipcMod.getInterVmPipes()
    -- controlToData: to start flow
    -- dataToControl: end of data
    -- appToControl: to start flow
@@ -98,7 +98,7 @@ function mod.getInterVmPipes()
 	 return pipes
 end
 
-function mod.getReadyPipes(numParticipants)
+function ipcMod.getReadyPipes(numParticipants)
 	 -- Setup pipes that slaves use to figure out when all are ready
 	 local readyPipes = {}
 	 local i = 1
@@ -109,7 +109,7 @@ function mod.getReadyPipes(numParticipants)
 	 return readyPipes
 end
 
-function mod.waitTillReady(readyInfo)
+function ipcMod.waitTillReady(readyInfo)
 	 -- tell others we're ready and check if others are ready
 	 local myPipe = readyInfo.pipes[readyInfo.id]
 	 if myPipe ~= nil then	 	 
@@ -136,7 +136,7 @@ function mod.waitTillReady(readyInfo)
 end
 
 -- prints times when msg was put on different queues and FCT
-function mod.printFlowEvent(flowEvent) 
+function ipcMod.printFlowEvent(flowEvent) 
      local eventsByName = flowEvent
      local eventsByTime = {}
      local times = {}		     
@@ -158,4 +158,4 @@ function mod.printFlowEvent(flowEvent)
 	end
 end
 
-return mod
+return ipcMod
