@@ -1,6 +1,7 @@
 local ffi = require("ffi")
 local pkt = require("packet")
 
+local dpdkc	= require "dpdkc"
 local dpdk	= require "dpdk"
 local memory	= require "memory"
 local device	= require "device"
@@ -14,7 +15,7 @@ local pcap = require "pcap"
 -- RW DCB Transmit Descriptor Plane T1 Config
 local RTTDT1C = 0x04908
 local RTTDQSEL = 0x00004904
-local PKT_SIZE	= 1124 -- without CRC
+local PKT_SIZE	= 4124 -- without CRC
 
 local ipc = require "examples.perc.ipc"
 -- application thread: talks with control plane
@@ -45,7 +46,9 @@ function master(...)
 	 local numCores = 8
 	 local core1 = (thisCore + 1)%numCores
 	 local core2 = (thisCore + 2)%numCores
-
+	 local core3 = (thisCore + 3)%numCores
+	 -- check same socket as port
+	 
 	 print("This core (rx) .. " .. thisCore
 		  .. " core1 (high tx) .. " .. core1
 		  .. " core2 (low tx) .. " .. core2)
@@ -69,20 +72,24 @@ function master(...)
 
 	    -- control and application on dev0, control on dev1
 	    -- pipes to sync all participating threads
-	    local readyPipes = ipc.getReadyPipes(2)
+	    local readyPipes = ipc.getReadyPipes(3)
 	    local highTag = 9999
 	    local lowTag = 9998
 	    
-	    local highTxQueue = txDev:getTxQueue(0)
-	    local lowTxQueue = txDev:getTxQueue(1)
+	    local highTxQueue = txDev:getTxQueue(2)
+	    local lowTxQueue = txDev:getTxQueue(3)
 
 	    highTxQueue:setRate(1000)
-	    lowTxQueue:setRate(5000)
+	    lowTxQueue:setRate(1000)
 
+	    setTxPriorities(highTxQueue, lowTxQueue)
+	    
+	    print("highTxQueue has rate " .. highTxQueue:getTxRate())
+	    print("lowTxQueue has rate " .. lowTxQueue:getTxRate())
 	    dpdk.sleepMillis(100)
 	    
-	    local highRxQueue = txDev:getRxQueue(0)
-	    local lowRxQueue = txDev:getRxQueue(1)
+	    local highRxQueue = rxDev:getRxQueue(0)
+	    local lowRxQueue = rxDev:getRxQueue(1)
 
 	    dpdk.launchLuaOnCore(
 	       core1, "loadTx", txDev,
@@ -92,10 +99,10 @@ function master(...)
 	    dpdk.launchLuaOnCore(
 	       core2, "loadTx", txDev,
 	       lowTxQueue, lowTag,
-	       {["pipes"]= readyPipes, ["id"]=1})
+	       {["pipes"]= readyPipes, ["id"]=2})
 
  	    counterSlave(highRxQueue, 
-	       {["pipes"]= readyPipes, ["id"]=2})
+	       {["pipes"]= readyPipes, ["id"]=3})
 	    
 	    dpdk.waitForSlaves()
 	    else print("Not all devices are up")
@@ -114,28 +121,38 @@ function loadTx(txDev, queue, tag, readyInfo)
 				       }
    end)
    bufs = mem:bufArray(128)
-   local ctr = stats:newDevTxCounter( "UDP Dst " .. tag, txDev, "plain")
+   --local ctr = stats:newDevTxCounter( "UDP Dst " .. tag, txDev, "plain")
 
    ipc.waitTillReady(readyInfo)
 	
    while dpdk.running() do
       bufs:alloc(PKT_SIZE)
       queue:send(bufs)
-      ctr:update()
+      --ctr:update()
    end
-   ctr:finalize()
+   --ctr:finalize()
 end
 
-function setTxPriorities(highQueue)
+function setTxPriorities(highQueue, lowQueue)
    local highPriority = 1.0
-
+   local lowPriority = 0
+   
    dpdkc.write_reg32(
       highQueue.id, RTTDQSEL,
       highQueue.qid)
 
    dpdkc.write_reg32(
-      highQueue.id, RTTDT1C,
-      bit.band(math.floor(highPriority * 0x80), 0x3FF))
+      highQueue.id, RTTDT1C, 0x2003)
+      --bit.band(math.floor(highPriority * 0x80), 0x3FF))
+
+   dpdkc.write_reg32(
+      lowQueue.id, RTTDQSEL,
+      lowQueue.qid)
+
+   dpdkc.write_reg32(
+      lowQueue.id, RTTDT1C, 0x000)
+      --bit.band(math.floor(lowPriority * 0x80), 0x3FF))
+
 end
 
 function addRxFilters(dev, tag1, queue1, tag2, queue2)
@@ -151,6 +168,7 @@ function counterSlave(queue, readyInfo)
 	local ctrs = {}
 
 	ipc.waitTillReady(readyInfo)
+	print("starting counter")
 	while dpdk.running() do
 		local rx = queue:recv(bufs)
 		for i = 1, rx do
