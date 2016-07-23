@@ -79,8 +79,8 @@ function master(...)
 	    local highTxQueue = txDev:getTxQueue(2)
 	    local lowTxQueue = txDev:getTxQueue(3)
 
-	    highTxQueue:setRate(1000)
-	    lowTxQueue:setRate(1000)
+	    highTxQueue:setRate(9000)
+	    lowTxQueue:setRate(3000)
 
 	    setTxPriorities(highTxQueue, lowTxQueue)
 	    
@@ -142,16 +142,16 @@ function setTxPriorities(highQueue, lowQueue)
       highQueue.qid)
 
    dpdkc.write_reg32(
-      highQueue.id, RTTDT1C, 0x2003)
-      --bit.band(math.floor(highPriority * 0x80), 0x3FF))
+     highQueue.id, RTTDT1C, --0x3FF)
+      bit.band(math.floor(highPriority * 0x80), 0x3FF))
 
    dpdkc.write_reg32(
       lowQueue.id, RTTDQSEL,
       lowQueue.qid)
 
    dpdkc.write_reg32(
-      lowQueue.id, RTTDT1C, 0x000)
-      --bit.band(math.floor(lowPriority * 0x80), 0x3FF))
+      lowQueue.id, RTTDT1C, --0x000)
+      bit.band(math.floor(lowPriority * 0x80), 0x3FF))
 
 end
 
