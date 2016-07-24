@@ -1,6 +1,6 @@
 local ffi = require("ffi")
 local pkt = require("packet")
-
+local filter    = require "filter"
 local dpdk	= require "dpdk"
 local memory	= require "memory"
 local device	= require "device"
@@ -48,10 +48,12 @@ function master(...)
 
 	 
 	 local txPort = 0
-	 txDev = device.config{ port = txPort, txQueues = 20}
-	 
+	 txDev = device.config{ port = txPort, txQueues = 20, rxQueues = 2}
+	 txDev:l2Filter(eth.TYPE_PERCG, 1)
+
 	 local rxPort = 1
-	 rxDev = device.config{ port = rxPort, rxQueues = 20}
+	 rxDev = device.config{ port = rxPort, txQueues = 20, rxQueues = 2}
+	 rxDev:l2Filter(eth.TYPE_PERCG, 1)
 
 	 numLinksUp = device.waitForLinks()
 

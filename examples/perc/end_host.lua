@@ -48,7 +48,7 @@ function EndHost.new (mem, dev, id, pipes, PKT_SIZE)
   self.rxBufs = mem:bufArray(32)
   self.rx = 0
   self.txQueue = dev:getTxQueue(0)
-  self.rxQueue = dev:getRxQueue(0)
+  self.rxQueue = dev:getRxQueue(1)
   self.PKT_SIZE = PKT_SIZE
   self.dev = dev
   self.pipes = pipes
