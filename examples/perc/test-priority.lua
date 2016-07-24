@@ -1,21 +1,25 @@
 local ffi = require("ffi")
 local pkt = require("packet")
 
+local filter    = require "filter"
 local dpdkc	= require "dpdkc"
 local dpdk	= require "dpdk"
 local memory	= require "memory"
 local device	= require "device"
 local stats		= require "stats"
 local pipe		= require "pipe"
+local ip4 = require "proto.ip4"
 local percg = require "proto.percg"
 local percc1 = require "proto.percc1"
 local eth = require "proto.ethernet"
 local pcap = require "pcap"
 
+local ntoh16, hton16 = ntoh16, hton16
+
 -- RW DCB Transmit Descriptor Plane T1 Config
 local RTTDT1C = 0x04908
 local RTTDQSEL = 0x00004904
-local PKT_SIZE	= 4124 -- without CRC
+local PKT_SIZE	= 4080 -- without CRC
 
 local ipc = require "examples.perc.ipc"
 -- application thread: talks with control plane
@@ -51,13 +55,14 @@ function master(...)
 	 
 	 print("This core (rx) .. " .. thisCore
 		  .. " core1 (high tx) .. " .. core1
-		  .. " core2 (low tx) .. " .. core2)
+		  .. " core2 (low tx) .. " .. core2
+		  .. " core3 (low rx) .. " .. core3)
 	 
 	 local txPort = 0
 	 local txDev = device.config{ port = txPort, txQueues = 4}
 	 
 	 local rxPort = 1
-	 local rxDev = device.config{ port = rxPort, rxQueues = 1}
+	 local rxDev = device.config{ port = rxPort, rxQueues = 2}
 
 	 numLinksUp = device.waitForLinks()
 
@@ -73,8 +78,6 @@ function master(...)
 	    -- control and application on dev0, control on dev1
 	    -- pipes to sync all participating threads
 	    local readyPipes = ipc.getReadyPipes(3)
-	    local highTag = 9999
-	    local lowTag = 9998
 	    
 	    local highTxQueue = txDev:getTxQueue(2)
 	    local lowTxQueue = txDev:getTxQueue(3)
@@ -82,26 +85,30 @@ function master(...)
 	    highTxQueue:setRate(9000)
 	    lowTxQueue:setRate(3000)
 
-	    setTxPriorities(highTxQueue, lowTxQueue)
-	    
+	    --setTxPriorities(highTxQueue, lowTxQueue)
 	    print("highTxQueue has rate " .. highTxQueue:getTxRate())
 	    print("lowTxQueue has rate " .. lowTxQueue:getTxRate())
-	    dpdk.sleepMillis(100)
 	    
 	    local highRxQueue = rxDev:getRxQueue(0)
 	    local lowRxQueue = rxDev:getRxQueue(1)
+	    addRxFilters(rxDev, highRxQueue, lowRxQueue)
 
+	    dpdk.sleepMillis(100)
 	    dpdk.launchLuaOnCore(
 	       core1, "loadTx", txDev,
-	       highTxQueue, highTag,
+	       highTxQueue, 0x1234,
 	       {["pipes"]= readyPipes, ["id"]=1})
 
 	    dpdk.launchLuaOnCore(
 	       core2, "loadTx", txDev,
-	       lowTxQueue, lowTag,
+	       lowTxQueue, 0x1200,
 	       {["pipes"]= readyPipes, ["id"]=2})
 
- 	    counterSlave(highRxQueue, 
+	    --dpdk.launchLuaOnCore(
+	    --  core3, "counterSlave", lowRxQueue,
+	    --  {["pipes"]= readyPipes, ["id"]=3})
+	    
+ 	    counterSlave(lowRxQueue, 
 	       {["pipes"]= readyPipes, ["id"]=3})
 	    
 	    dpdk.waitForSlaves()
@@ -109,16 +116,10 @@ function master(...)
 	 end
 end
 
-function loadTx(txDev, queue, tag, readyInfo)
+function loadTx(txDev, queue, ethType, readyInfo)
    local mem = memory.createMemPool(function(buf)
-		buf:getUdpPacket():fill{
-			pktLength = PKT_SIZE,
-			ethSrc = queue,
-			ethDst = "10:11:12:13:14:15",
-			ip4Dst = "192.168.1.1",
-			udpSrc = 1234,
-			udpDst = tag
-				       }
+	    buf:getEthernetPacket():fill{
+	       ethType = ethType}
    end)
    bufs = mem:bufArray(128)
    --local ctr = stats:newDevTxCounter( "UDP Dst " .. tag, txDev, "plain")
@@ -155,12 +156,22 @@ function setTxPriorities(highQueue, lowQueue)
 
 end
 
-function addRxFilters(dev, tag1, queue1, tag2, queue2)
-   -- tags/ src port in big endian
-   filter1 = {[src_port]=tag1}
-   filter2 = {[src_port]=tag2}
-   dev:addHW5TupleFilter(filter1, queue1.qid)
-   dev:addHW5TupleFilter(filter2, queue2.qid)
+function addRxFilters(dev, highQueue, lowQueue)
+   dev:flushHWFilter()
+   dpdk.sleepMillis(1000)
+   print("adding filter for " .. tostring(0x1234)
+	    .. " to enqueue on " .. tostring(highQueue.qid))
+   print("adding filter for " .. tostring(0x1200)
+	    .. " to enqueue on " .. tostring(lowQueue.qid))
+   dev:l2Filter(0x1234, highQueue.qid)
+   dev:l2Filter(0x1200, lowQueue.qid)
+   
+   --dev:addHWEthertypeFilter({["ether_type"]=hton16(0x1234)},
+   --   lowQueue.qid)
+   --dev:addHWEthertypeFilter({["ether_type"]=hton16(0x1200)},
+   --  lowQueue.qid)
+   --dev:addHWEthertypeFilter({["ether_type"]=hton16(0x12006)},
+   --  lowQueue.qid)
 end
 
 function counterSlave(queue, readyInfo)
@@ -173,12 +184,14 @@ function counterSlave(queue, readyInfo)
 		local rx = queue:recv(bufs)
 		for i = 1, rx do
 			local buf = bufs[i]
-			local pkt = buf:getUdpPacket()
-			local port = pkt.udp:getDstPort()
-			local ctr = ctrs[port]
+			local pkt = buf:getEthernetPacket()
+			local ethType = pkt.eth:getType()
+			local ctr = ctrs[ethType]
 			if not ctr then
-				ctr = stats:newPktRxCounter("Port " .. port, "plain")
-				ctrs[port] = ctr
+			   ctr = stats:newPktRxCounter(
+			      "RxQueue " .. queue.qid
+				 .. ", ethType " .. ethType, "plain")
+				ctrs[ethType] = ctr
 			end
 			ctr:countPacket(buf)
 		end
