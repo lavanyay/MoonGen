@@ -305,6 +305,15 @@ function dev:l2Filter(etype, queue)
 	end
 end
 
+function dev:flushHWFilter()
+  fun = deviceDependent[self:getPciId()].flushHWFilter
+  if fun then
+    return fun(self)
+  else
+    log:fatal("flushHWFilter not supported, or not yet implemented for this device")
+  end
+
+end
 --- Installs a 5tuple filter on the device.
 ---  Matching packets will be redirected into the specified rx queue
 ---  NOTE: this is currently only tested for X540 NICs, and will probably also
@@ -333,6 +342,22 @@ function dev:addHW5tupleFilter(filter, queue, priority)
     log:fatal("addHW5tupleFilter not supported, or not yet implemented for this device")
   end
 end
+
+-- TODO(lav): how's this different from l2filter above?
+-- Similar to above but just match on ether_type
+-- @param filter A table with one possible field ether_type
+--- @param queue RX Queue, where packets, matching this filter will be redirected
+function dev:addHWEthertypeFilter(filter, queue)
+  fun = deviceDependent[self:getPciId()].addHWEthertypeFilter
+  if fun then
+     print("ether_type is " .. filter.ether_type .. " and queue is "
+	      .. queue)
+     return fun(self, filter, queue)
+  else
+    log:fatal("addHWEthertypeFilter not supported, or not yet implemented for this device")
+  end
+end
+
 
 --- Filter PTP time stamp packets by inspecting the PTP version and type field.
 --- Packets with PTP version 2 are matched with this filter.
