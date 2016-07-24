@@ -116,6 +116,7 @@ int configure_device(int port, int rx_queues, int tx_queues, int rx_descs, int t
 		.mode = RTE_FDIR_MODE_PERFECT,
 		.pballoc = RTE_FDIR_PBALLOC_64K,
 		.status = RTE_FDIR_REPORT_STATUS_ALWAYS,
+		.drop_queue = 127, // added by lav
 		.mask = {
 			.vlan_tci_mask = 0x0,
 			.ipv4_mask = {
@@ -163,7 +164,7 @@ int configure_device(int port, int rx_queues, int tx_queues, int rx_descs, int t
 	};
 	struct rte_eth_conf port_conf = {
 		.rxmode = {
-			.mq_mode = rss_enable ? ETH_MQ_RX_RSS : ETH_MQ_RX_NONE,
+			.mq_mode = ETH_MQ_RX_NONE,
 			.split_hdr_size = 0,
 			.header_split = 0,
 			.hw_ip_checksum = 1,

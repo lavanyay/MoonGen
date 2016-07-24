@@ -89,14 +89,15 @@ function master(...)
 	    print("highTxQueue has rate " .. highTxQueue:getTxRate())
 	    print("lowTxQueue has rate " .. lowTxQueue:getTxRate())
 	    
-	    local highRxQueue = rxDev:getRxQueue(0)
-	    local lowRxQueue = rxDev:getRxQueue(1)
-	    addRxFilters(rxDev, highRxQueue, lowRxQueue)
+	    local highRxQueue = rxDev:getRxQueue(1)
+
+	    local defaultRxQueue = rxDev:getRxQueue(0)
+	    addRxFilters(rxDev, highRxQueue)
 
 	    dpdk.sleepMillis(100)
 	    dpdk.launchLuaOnCore(
 	       core1, "loadTx", txDev,
-	       highTxQueue, 0x1234,
+	       highTxQueue, eth.TYPE_PERCG,
 	       {["pipes"]= readyPipes, ["id"]=1})
 
 	    dpdk.launchLuaOnCore(
@@ -108,7 +109,7 @@ function master(...)
 	    --  core3, "counterSlave", lowRxQueue,
 	    --  {["pipes"]= readyPipes, ["id"]=3})
 	    
- 	    counterSlave(lowRxQueue, 
+ 	    counterSlave(defaultRxQueue, 
 	       {["pipes"]= readyPipes, ["id"]=3})
 	    
 	    dpdk.waitForSlaves()
@@ -156,22 +157,15 @@ function setTxPriorities(highQueue, lowQueue)
 
 end
 
-function addRxFilters(dev, highQueue, lowQueue)
+function addRxFilters(dev, highQueue)
    dev:flushHWFilter()
    dpdk.sleepMillis(1000)
-   print("adding filter for " .. tostring(0x1234)
+   print("adding filter for " .. tostring(eth.TYPE_PERCG)
 	    .. " to enqueue on " .. tostring(highQueue.qid))
-   print("adding filter for " .. tostring(0x1200)
-	    .. " to enqueue on " .. tostring(lowQueue.qid))
-   dev:l2Filter(0x1234, highQueue.qid)
-   dev:l2Filter(0x1200, lowQueue.qid)
-   
-   --dev:addHWEthertypeFilter({["ether_type"]=hton16(0x1234)},
-   --   lowQueue.qid)
-   --dev:addHWEthertypeFilter({["ether_type"]=hton16(0x1200)},
-   --  lowQueue.qid)
-   --dev:addHWEthertypeFilter({["ether_type"]=hton16(0x12006)},
-   --  lowQueue.qid)
+   dev:l2Filter(eth.TYPE_PERCG, highQueue.qid)
+   -- Filter on the EtherType value want to match,
+   -- for example 0x0806 for ARP packet. 0x0800 (IPv4)
+   -- and 0x86DD (IPv6) are invalid.
 end
 
 function counterSlave(queue, readyInfo)
