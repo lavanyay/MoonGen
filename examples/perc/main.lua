@@ -18,6 +18,7 @@ local ipc = require "examples.perc.ipc"
 -- Receives completions and updates using
 -- acceptMsgs(pipes, "slowPipeControlToApp")
 local app1 = require "examples.perc.app1"
+local app2 = require "examples.perc.app2"
 
 -- perc control plane thread
 local control1 = require "examples.perc.control1"
@@ -45,7 +46,7 @@ function master(...)
 	 local numCores = 8
 	 core1 = (thisCore + 1)%numCores
 	 core2 = (thisCore + 2)%numCores
-
+	 core3 = (thisCore + 3)%numCores
 	 
 	 local txPort = 0
 	 txDev = device.config{ port = txPort, txQueues = 20, rxQueues = 2}
@@ -68,7 +69,7 @@ function master(...)
 
 	    -- control and application on dev0, control on dev1
 	    -- pipes to sync all participating threads
-	    local readyPipes = ipc.getReadyPipes(3)
+	    local readyPipes = ipc.getReadyPipes(4)
 	    
 
 	    dpdk.launchLuaOnCore(
@@ -81,9 +82,14 @@ function master(...)
 	       pipesRxDev,
 	       {["pipes"]= readyPipes, ["id"]=2})
 
-	    app1.applicationSlave(
+	    dpdk.launchLuaOnCore(
+	       core3, "loadDataSlave", txDev,
 	       pipesTxDev,
 	       {["pipes"]= readyPipes, ["id"]=3})
+
+	    app2.applicationSlave(
+	       pipesTxDev,
+	       {["pipes"]= readyPipes, ["id"]=4})
 	    
 	    dpdk.waitForSlaves()
 	    else print("Not all devices are up")

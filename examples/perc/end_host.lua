@@ -199,6 +199,8 @@ function EndHost:handleFlowCompletions(msgs)
 	 table.insert(self.freeQueues, queueNo)
 	 self.queues[flowId] =  nil
       end -- ends if self.queues
+      -- TODO(lav): maybe let app know data
+      --  transmission finished
    end -- ends for msgNo,..	      	   
 end
 
@@ -218,11 +220,13 @@ function EndHost:handleNewFlows(msgs, now)
 	 self.numPendingMsgs = self.numPendingMsgs + 1
 	 -- assign queue
 	 local queue = table.remove(self.freeQueues)
+	 assert(queue ~= nil)
 	 self.queues[flowId] = queue
-	 --print("Assigned queue " .. queue .. " to " .. flowId)
-	 -- tell data slave to start sending       
+	 print("Control thread assigned queue " .. queue .. " to " .. flowId)
+	 --tell data slave to start sending       
 	 local startDataMsg = msg
-	 ipc.sendFcdStartMsg(self.pipes, msg.flow, msg.destination, queue)
+	 -- TODO(lav): pointer to app data
+	 ipc.sendFcdStartMsg(self.pipes, msg.flow, msg.destination, msg.size, queue)
 	 --msg["queue"]=queue
 	 --ipc.sendMsgs(self.pipes, "fastPipeControlToDataStart", msg)
       end -- ends if next(freeQueues..

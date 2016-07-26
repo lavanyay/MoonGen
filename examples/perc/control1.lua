@@ -21,6 +21,11 @@ control1Mod = {}
 -- receives control packets on rx queue, computes new bottleneck info and sends out new packets
 -- adjusts rates of data queues based on rxd control packets
 
+-- TODO(lav)
+-- can we make it even simpler, example rx some packets, modify them to get
+-- packets to send (or drop), and add new packets for new flows.
+-- and tx
+-- then fetch new flows list and completed flows list.
 function control1Mod.controlSlave(dev, pipes, readyInfo)
       local thisCore = dpdk.getCore()
       print("Running control slave on core " .. thisCore)
@@ -67,12 +72,13 @@ function control1Mod.controlSlave(dev, pipes, readyInfo)
 	      local msgs = ipc.acceptFacStartMsgs(pipes)
 	      --, "fastPipeAppToControlStart")
 	      if next(msgs) ~= nil then 
-	         --print("handle " .. #msgs .. " updates on pipe flow start") 
+	         print("handle " .. #msgs .. " updates on pipe flow start") 
 	      	 endHost:handleNewFlows(msgs,  dpdk.getTime())  
 	      end
 
 	      -- Handle flow completion updates ..
-	      local msgs = ipc.acceptFacEndMsgs(pipes)
+	      -- from data salve
+	      local msgs = ipc.acceptFdcEndMsgs(pipes)
 	      if next(msgs) ~= nil then 
 	         --print("handle " .. #msgs .. " updates on pipe flow completions") 
 	      	 endHost:handleFlowCompletions(msgs) 

@@ -4,29 +4,33 @@ local pipe		= require "pipe"
 ipcMod = {}
 
 ffi.cdef[[
-typedef struct { int flow, destination; double startTime;} facStartMsg;  
-typedef struct { int flow, destination, queue; } fcdStartMsg;  
+typedef struct { int flow, destination, size; double startTime;} facStartMsg;  
+typedef struct { int flow, destination, size, queue; } fcdStartMsg;  
 typedef struct { int flow; } facEndMsg;  
+typedef struct { int flow; double endTime;} fdcEndMsg;  
 typedef facStartMsg* pFacStartMsg;
 typedef fcdStartMsg* pFcdStartMsg;
 typedef facEndMsg* pFacEndMsg;
+typedef fdcEndMsg* pFdcEndMsg;
 // Declare a struct and typedef.
 ]]
 
 
-function ipcMod.sendFacStartMsg(pipes, flow, destination, startTime)
+function ipcMod.sendFacStartMsg(pipes, flow, destination, size, startTime)
    local msg = ffi.new("facStartMsg[?]", 1)
    msg[0].flow = flow
    msg[0].destination = destination
+   msg[0].size = size
    msg[0].startTime = startTime
    ipcMod.sendMsgs(pipes, "fastPipeAppToControlStart", msg)
    --return msg
 end
 
-function ipcMod.sendFcdStartMsg(pipes, flow, destination, queue)
+function ipcMod.sendFcdStartMsg(pipes, flow, destination, size, queue)
    local msg = ffi.new("fcdStartMsg[?]", 1)
    msg[0].flow = flow
    msg[0].destination = destination
+   msg[0].size = size
    msg[0].queue = queue
    ipcMod.sendMsgs(pipes, "fastPipeControlToDataStart", msg)
    --return msg
@@ -36,6 +40,14 @@ function ipcMod.sendFacEndMsg(pipes, flow)
    local msg = ffi.new("facEndMsg[?]", 1)
    msg[0].flow = flow
    ipcMod.sendMsgs(pipes, "fastPipeAppToControlEnd", msg)
+   --return msg
+end
+
+function ipcMod.sendFdcEndMsg(pipes, flow, endTime)
+   local msg = ffi.new("fdcEndMsg[?]", 1)
+   msg[0].flow = flow
+   msg[0].endTime = endTime
+   ipcMod.sendMsgs(pipes, "fastPipeDataToControlEnd", msg)
    --return msg
 end
 
@@ -49,6 +61,10 @@ end
 
 function ipcMod.acceptFacEndMsgs(pipes)
    return ipcMod.acceptMsgs(pipes, "fastPipeAppToControlEnd", "pFacEndMsg")
+end
+
+function ipcMod.acceptFdcEndMsgs(pipes)
+   return ipcMod.acceptMsgs(pipes, "fastPipeDataToControlEnd", "pFdcEndMsg")
 end
 
 
@@ -91,6 +107,7 @@ function ipcMod.getInterVmPipes()
 	 local pipes =  {
 	 	 ["fastPipeAppToControlStart"] = pipe.newFastPipe(),
 	 	 ["fastPipeAppToControlEnd"] = pipe.newFastPipe(),
+	 	 ["fastPipeDataToControlEnd"] = pipe.newFastPipe(),
 		 ["slowPipeControlToApp"] = pipe.newSlowPipe(), 
 		 ["fastPipeControlToDataStart"] = pipe.newFastPipe() 
 	 }

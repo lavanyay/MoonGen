@@ -662,6 +662,18 @@ function dev:setRate(rate)
 	assert(ffi.C.i40e_aq_config_vsi_bw_limit(i40eDev, vsiSeid, rate, 0, nil) == 0)
 end
 
+function txQueue:trySendN(bufs, size)
+	self.used = true
+	return dpdkc.rte_eth_tx_burst_export(
+	   self.id, self.qid, bufs.array, size)
+end
+
+function txQueue:trySend(bufs)
+	self.used = true
+	return dpdkc.rte_eth_tx_burst_export(
+	   self.id, self.qid, bufs.array, bufs.size)
+end
+
 function txQueue:send(bufs)
 	self.used = true
 	dpdkc.send_all_packets(self.id, self.qid, bufs.array, bufs.size)
