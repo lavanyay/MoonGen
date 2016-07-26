@@ -14,8 +14,14 @@ local EndHost = require "examples.perc.end_host"
 
 local PKT_SIZE	= 80
 
-control1Mod = {}
+control2Mod = {}
 
+ffi.Cdef [[
+struct rateInfo {
+double currentRate, nextRate;
+double changeTime;
+}
+]]
 -- handles flow start messages from applications - to send first control, assign a free queue for data
 -- handles flow completion message from "data slave", sends exit packet to free up bandwidth, reclaims queue
 -- receives control packets on rx queue, computes new bottleneck info and sends out new packets
@@ -26,7 +32,44 @@ control1Mod = {}
 -- packets to send (or drop), and add new packets for new flows.
 -- and tx
 -- then fetch new flows list and completed flows list.
-function control1Mod.controlSlave(dev, pipes, readyInfo)
+
+function control2Mod.percc1ProcessAndGetRate(pkt)
+   tmp = pkt.percg:getDestination()
+   pkt.percg:setDestination(pkt.eth:getSource())
+   pkt.percg:setSource(tmp)
+
+   -- get maxHops, then smallest index, two rates
+   local maxHops = pkt.percc1:getHop()
+   if (pkt.percc1:getIsForward() ~= percg.IS_FORWARD) then
+      maxHops = pkt.percc1:getMaxHops()
+   end
+   local bnInfo = pkt.percc1:getBottleneckInfo(maxHops)
+   local bnRate1, bnRate2 = bnInfo.bnRate1, bnInfo.bnRate2   
+   local bnBitmap = bnInfo.bitmap
+   -- then set rate at each index
+   -- and unsat/ sat at each index
+   --pkt.percg:setRatesAndLabelGivenBottleneck(rate, hop, maxHops)	      
+   for i=1,maxHops do		 
+      pkt.percc1:setOldLabel(i, pkt.percc1:getNewLabel(i))
+      pkt.percc1:setOldRate(i,  pkt.percc1:getNewRate(i))
+      if bnBitmap[i] ~= 1 then
+	 pkt.percc1:setNewLabel(i, percc.LABEL_SAT)
+	 pkt.percc1:setNewRate(i,  bnRate1)
+      else
+	 pkt.percc1:setLabel(bnIndex, percc.LABEL_UNSAT)
+	 pkt.percc1:setRate(bnIndex, bnRate2)
+      end
+   end
+   pkt.percc1:setMaxHops(maxHops) -- and hop is the same
+   if (pkt.percc1:getIsForward() ~= percg.IS_FORWARD) then      
+      pkt.percc1:setIsForward(percg.IS_FORWARD)
+   else
+      pkt.percc1:setIsForward(percg.IS_NOT_FORWARD)
+   end
+   return bnRate1
+end
+
+function control2Mod.controlSlave(dev, pipes, readyInfo)
       local thisCore = dpdk.getCore()
       print("Running control slave on core " .. thisCore)
 
@@ -63,7 +106,7 @@ function control1Mod.controlSlave(dev, pipes, readyInfo)
 	   end
 	end
 
-	local rates = {}
+	local rateInfo = {}
 	local queueRates = {}
 	local pendingChangeRate = {}
 	
@@ -81,53 +124,51 @@ function control1Mod.controlSlave(dev, pipes, readyInfo)
 	      local tmp = pkt.eth:getDst()
 	      pkt.eth:setDst(pkt.eth:getSrc())
 	      pkt.eth:setSrc(tmp)
-
-	      if queues[flow] == nil or
-		 (pkt.percc1:getIsForward() ~= percg.IS_FORWARD
-		  and pkt.percc1:getIsExit() == percg.IS_EXIT) then
-		    pkt.eth:setSrc(-1)
+	      -- handle differently at receiver and source
+	      -- receiver simply processes and echoes, FIN or not
+	      if pkt.percc1:getIsForward() == percg.IS_FORWARD then
+		 self.percc1ProcessAndGetRate(pkt)
 	      else
-		 tmp = pkt.percg:getDestination()
-		 pkt.percg:setDestination(pkt.eth:getSource())
-		 pkt.percg:setSource(tmp)
-		 
-		 -- get maxHops, then smallest index, two rates
-		 local maxHops = pkt.percc1:getHop()
-		 if (pkt.percc1:getIsForward() ~= percg.IS_FORWARD) then
-		    maxHops = pkt.percc1:getMaxHops()
-		 end
-		 local bnInfo = pkt.percc1:getBottleneckInfo(maxHops)
-		 local bnRate1, bnRate2 = bnInfo.bnRate1, bnInfo.bnRate2
-
-		 if bnRate1 ~= rates[flowId] then
-		    rates[flowId] = bnRate1
-		    pendingChangeRate[flowId] =bnRate1
-		 end
-		 
-		 local bnBitmap = bnInfo.bitmap
-		 -- then set rate at each index
-		 -- and unsat/ sat at each index
-		 --pkt.percg:setRatesAndLabelGivenBottleneck(rate, hop, maxHops)	      
-		 for i=1,maxHops do		 
-		    pkt.percc1:setOldLabel(i, pkt.percc1:getNewLabel(i))
-		    pkt.percc1:setOldRate(i,  pkt.percc1:getNewRate(i))
-		    if bnBitmap[i] ~= 1 then
-		       pkt.percc1:setNewLabel(i, percc.LABEL_SAT)
-		       pkt.percc1:setNewRate(i,  bnRate1)
-		    else
-		       pkt.percc1:setLabel(bnIndex, percc.LABEL_UNSAT)
-		       pkt.percc1:setRate(bnIndex, bnRate2)
-		    end
-		 end
-		 pkt.percc1:setMaxHops(maxHops) -- and hop is the same
-		 if (pkt.percc1:getIsForward() ~= percg.IS_FORWARD) then
-		    pkt.percc1:setIsForward(percg.IS_FORWARD)
-		 else pkt.percc1:setIsForward(percg.IS_NOT_FORWARD) end
-		 
-		 -- TODO(lav): if flow ended (queues[flow] = nil)
-		 -- mess up pkt headers so it's dropped
-	      end -- ends if queues[flow] == nil..
-	   end
+		 -- source doesn't reply to FIN
+		 -- will set FIN for flows that ended
+		 -- will update rates otherwise
+		 if pkt.percc1:getIsExit() == percg.IS_EXIT then -- receiver echoed fin		 
+		    pkt.eth:setSrc(-1)		    
+		 elseif queues[flow] == nil then -- flow ended
+		    self.percc1ProcessAndGetRate(pkt)
+		    pkt.percc1:setIsExit(percg.IS_EXIT)	      
+		 else -- flow hasn't ended yet, update rates
+		    local rate1 = self.percc1ProcessAndGetRate(pkt)
+		    assert(rate1 ~= nil)
+		    local queueNo = queues[flowId]
+		    assert(queueNo ~= nil)
+		    local rateInfo = queueRates[queueNo]
+		    -- should setup with queue
+		    -- initilize to current = 0, next, changeTime = nil
+		    assert(rateInfo ~= nil)		    
+		    if rate1 ~= rateInfo.current then
+		       if rate1 < rateInfo.current then
+			  rateInfo.current = rate1
+			  rateInfo.next = nil
+			  rateInfo.changeTime = nil
+			  -- txDev:setRate ..
+			  dev:getTxQueue(queueNo):setRate(rate1)
+		       else -- rate1 > rateInfo.current
+			  if rateInfo.next == nil then
+			     rateInfo.next = rate
+			     rateInfo.changeTime = now + 2
+			  elseif rate1 < rateInfo.next then
+			     rateInfo.next = rate1
+			     -- leave changeTime as is
+			  else -- rate1 > rateInfo.next
+			     rateInfo.next = rate1
+			     rateInfo.changeTime = now + 2
+			     -- reset changeTime
+			  end
+		       end -- if rate1 < current else if etc. etc.
+		    end -- if rate1 is different from current
+		 end -- if packet at recevier/ source etc. etc.
+	   end -- for i = 1, rx
 	   txQueue:sendN(bufs, rx)
 
 	   -- makes new packets
@@ -135,13 +176,19 @@ function control1Mod.controlSlave(dev, pipes, readyInfo)
 	   if msgs ~= nil then
 	      local numNew = 0
 	      for msgNo, msg in pairs(msgs) do
-		 -- get a queue
+		 -- get a queue and queueRates state
 		 if next(freeQueues) ~= nil then
 		    local flowId = msg.flow
 		    assert(queues[flowId] == nil)
 		    local queue = table.remove(freeQueues)
 		    queues[flowId] = queue
-		    assert(numNew < 100)
+
+		    queueRates[flowId] = ffi.C.new("rateInfo")
+		    queueRates[flowId].currentRate = 0
+		    queueRates[flowId].nextRate = nil
+		    queueRates[flowId].changeTime = nil
+
+		    assert(numNew < 100) -- we only have 100 mbufs for new packets
 		    numNew = numNew + 1
 		    -- tell data thread
 		    ipc.sendFcdStartMsg(pipes, msg.flow,
@@ -171,61 +218,19 @@ function control1Mod.controlSlave(dev, pipes, readyInfo)
 		 queues[flowId] =  nil
 	      end
 	   end
-	   -- TODO(lav): change rates
-	   --changeRates(pendingChangeRate, rates, queueRates,  queues, dev)
+
+	   -- change rates of active flows if it's time
+	   for queueNo, rateInfo in pairs(self.queueRates) do
+	      if rateInfo.changeTime ~= nil and ratesInfo.changeTime <= now then
+		 rateInfo.current = rateInfo.next
+		 rateInfo.next = nil
+		 rateInfo.changeTime = nil
+		 dev:getTxQueue(queueNo):setRate(rateInfo.current)
+	      end
+
 	end -- while dpdk.running()	
 	dpdk.sleepMillis(5000)
 end
 
--- function EndHost:changeRates()
-   -- update next rate, changeTime for all queues
-   -- cases:
-   -- no current rate
-   -- or if new rate is smaller, simply update next rate, changeTime now
-   -- if new rate is bigger, see if there's a next rate scheduled
-   -- if no next rate or if next rate is smaller, update next rate, reset changeTime
-   -- or if next rate is bigger, update nextRate but don't changeTime   
-   
---    local now = dpdk.getTime()
---    for flowNo, rate in pairs(self.pendingChangeRate) do
---       local queueNo = self.queues[flowNo]
---       if queueNo ~= nil then
--- 	 --print("Found queue " .. queueNo .. " for flow " .. flowNo)
--- 	 local rates = self.queueRates[queueNo]
--- 	 if rates == nil or rates.current < rate then
--- 	    rates = {}
--- 	    rates["flowNo"] = flowNo
--- 	    rates["current"] = nil
--- 	    rates["next"] = rate
--- 	    rates["changeTime"] = now
--- 	 elseif rates.next == nil or rates.next < rate then
--- 	    rates["next"] = rate
--- 	    rates["changeTime"] = now + 2
--- 	 else
--- 	    rates["next"] = rate
--- 	 end
--- 	 self.queueRates[queueNo] = rates
---       else
--- 	 --print("No queue assigned for flow " .. flowNo)
---       end
---    end
---    self:updateRates(now)
--- end
 
--- function EndHost:updateRates(now)
---    for queueNo, rates in pairs(self.queueRates) do
---       if rates.changeTime ~= nil and rates.changeTime <= now then
--- 	 rates["current"] = rates["next"]
--- 	 rates["next"] = nil
--- 	 rates["changeTime"] = nil
--- 	 ipc.sendMsgs(self.pipes, "slowPipeControlToApp",
--- 		      {["msg"]= ("updated rate of flow " 
--- 				    .. rates["flowNo"] .. " to "
--- 				    .. rates["current"]), ["now"]= now})
--- 	 if (true) then self.dev:getTxQueue(queueNo):setRate(rates["current"]) end
---       end
---    end   
--- end
-
-
-return control1Mod
+return control2Mod
