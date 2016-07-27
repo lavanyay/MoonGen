@@ -21,7 +21,7 @@ local app1 = require "examples.perc.app1"
 local app2 = require "examples.perc.app2"
 
 -- perc control plane thread
-local control1 = require "examples.perc.control1"
+local control1 = require "examples.perc.control2"
 -- perc data plane thread
 local data1 = require "examples.perc.data1"
 

@@ -101,19 +101,28 @@ function app1Mod.applicationSlave(pipes, readyInfo)
 		 or activeFlows[lastFlowEnded] == nil)
       then
 	 local sendTime = dpdk.getTime()
-	 local threshold = ((1.0*numActiveFlows)/maxFlows)
-	 if math.random() <  threshold then
+	 
+	 local numRequestsNotCompleted = 0
+	 for k, v in active do
+	    numRequestsNotCompleted = numRequestNotCompleted + 1
+	 end
+	 assert(numActiveFlows <= numRequestsNotCompleted)
+	 local threshold = ((1.0*numRequestsNotCompleted)/maxFlows)
+	 
+	 if math.random() <  threshold and threshold <= 1 then
 	    removeFlowId = app1Mod.endOldFlow(active, pipes)
 	    lastFlowEnded = removeFlowId
 	    print("Change " .. seqNo .. " at "
 		     .. sendTime .. ": remove " .. removeFlowId .. "\n")
-	 else
+	 elseif numActiveFlows < maxFlows and newFlowId < 200 then
 	    app1Mod.startNewFlow(newFlowId,active, pipes, sendTime)
 	    lastFlowStarted = newFlowId
 	    print("Change " .. seqNo .. " at "
 		     .. sendTime .. ": add " .. newFlowId
 		  .. "\n")
 	    newFlowId = newFlowId+1
+	 else
+	    
 	 end
 	 seqNo = seqNo + 1
 	 lastSentTime = sendTime
