@@ -21,6 +21,7 @@ ffi.cdef [[
 typedef struct {
 double currentRate, nextRate;
 double changeTime;
+bool valid;
 } rateInfo;
 ]]
 -- handles flow start messages from applications - to send first control, assign a free queue for data
@@ -65,9 +66,11 @@ function control2Mod.percc1ProcessAndGetRate(pkt)
       end
    end -- for i=1,maxHops
    pkt.percc1:setMaxHops(maxHops) -- and hop is the same
-   if (pkt.percc1:getIsForward() ~= percc1.IS_FORWARD) then      
+   if (pkt.percc1:getIsForward() ~= percc1.IS_FORWARD) then
+      print("marking packet as forward")
       pkt.percc1:setIsForward(percc1.IS_FORWARD)
    else
+      print("marking packet as reverse")
       pkt.percc1:setIsForward(percc1.IS_NOT_FORWARD)
    end -- if (pkt.percc1:getIsForward() ..
    return bnRate1
@@ -100,20 +103,25 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
       endHost = EndHost.new(mem, dev, readyInfo.id, pipes, PKT_SIZE) 
       local lastRxTime = 0
       local lastTxTime = 0
-      local rxQueue = dev:getRxQueue(0)
+      local rxQueue = dev:getRxQueue(1)
       assert(rxQueue ~= nil)
-      local txQueue = dev:getTxQueue(0)
+      local txQueue = dev:getTxQueue(1)
       assert(txQueue ~= nil)
       
       local freeQueues = {}
+      -- what I really need is just flow id -> queue and queue -> config + flowId
       local queues = {}
+      local queueRates = ffi.new("rateInfo[?]", 128)
       for i=0, 127 do
 	 if (127-i) ~= 0 then 
 	    table.insert(freeQueues, 127-i)
 	 end
+	 queueRates[i].currentRate = 0
+	 queueRates[i].nextRate = -1
+	 queueRates[i].changeTime = -1
+	 queueRates[i].valid = false
       end
 
-      local queueRates = {}
       local pendingChangeRate = {}
 	
       local newBufs = mem:bufArray(100) -- for new packets
@@ -136,6 +144,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	    -- receiver simply processes and echoes, FIN or not
 	    if pkt.percc1:getIsForward() == percc1.IS_FORWARD then
 	       assert(pkt.percg:getFlowId() >= 100)
+	       print("rx control gets pkt for flow " .. pkt.percg:getFlowId())
 	       control2Mod.percc1ProcessAndGetRate(pkt)
 	    else
 	       -- TOFIX(lav): V fails
@@ -143,47 +152,64 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	       -- source doesn't reply to FIN
 	       -- will set FIN for flows that ended
 	       -- will update rates otherwise
-	       if pkt.percc1:getIsExit() == percc1.IS_EXIT then -- receiver echoed fin		 
-		  pkt.eth:setSrc(-1)
+	       if pkt.percc1:getIsExit() == percc1.IS_EXIT then -- receiver echoed fin
+		  print("tx control gets exit pkt for flow " .. pkt.percg:getFlowId())
+		  pkt.eth:setType(1234)		  
 		  ipc.sendMsgs(pipes, "slowPipeControlToApp",
 			       {["msg"] = ("control end flow " .. pkt.percg:getFlowId()),
 				  ["now"] = now})
 
-	       elseif queues[flow] == nil then -- flow ended
+	       elseif queues[pkt.percg:getFlowId()] == nil then -- flow ended
+		  print("tx control gets regular pkt for no-more-data flow " .. pkt.percg:getFlowId())
 		  control2Mod.percc1ProcessAndGetRate(pkt)
+		  assert(pkt.percc1:getIsForward() == percc1.IS_FORWARD)
 		  pkt.percc1:setIsExit(percc1.IS_EXIT)	      
 	       else -- flow hasn't ended yet, update rates
+		  print("tx control gets regular pkt for have-more-data flow " .. pkt.percg:getFlowId())
 		  local rate1 = control2Mod.percc1ProcessAndGetRate(pkt)		  
-		    assert(rate1 ~= nil)
-		    local queueNo = queues[flowId]
-		    assert(queueNo ~= nil)
-		    local rateInfo = queueRates[queueNo]
-		    -- should setup with queue
-		    -- initilize to current = 0, next, changeTime = nil
-		    assert(rateInfo ~= nil)
-		    assert(rateInfo[0].currentRate >= 0)
-		    if rate1 ~= rateInfo[0].currentRate then
-		       if rate1 < rateInfo[0].currentRate then
-			  rateInfo[0].currentRate = rate1
-			  rateInfo[0].nextRate = -1
-			  rateInfo[0].changeTime = -1
-			  -- txDev:setRate ..
-			  dev:getTxQueue(queueNo):setRate(rate1)
-		       else -- rate1 > rateInfo[0].currentRate
-			  if rateInfo[0].nextRate == -1 then
-			     rateInfo[0].nextRate = rate
-			     rateInfo[0].changeTime = now + 2
-			  elseif rateInfo[0].nextRate >= 0 and rate1 < rateInfo[0].nextRate then
-			     rateInfo[0].nextRate = rate1
-			     -- leave changeTime as is
-			  else -- rate1 > rateInfo[0].nextRate
-			     rateInfo[0].nextRate = rate1
-			     rateInfo[0].changeTime = now + 2
-			     -- reset changeTime
-			  end -- if rate1 < current else if etc. etc.
-		       end
-		    end -- if rate1 is different from current (rate update?)
-	       end -- if pkt.percg.getIsExit ..(fin/ last/ echo?)
+		  assert(pkt.percc1:getIsForward() == percc1.IS_FORWARD)
+		  assert(rate1 ~= nil)
+		  local queueNo = queues[pkt.percg:getFlowId()]
+		  print("flow was assigned queue " .. queueNo)
+		  assert(queueNo ~= nil)
+		  local rateInfo = queueRates[queueNo]
+		  -- should setup with queue
+		  -- initilize to current = 0, next, changeTime = nil
+		  assert(queueRates[queueNo].valid)		  
+		  assert(rateInfo.currentRate >= 0)
+		  if rate1 ~= rateInfo.currentRate then
+		     if rate1 < rateInfo.currentRate then
+			print("  new rate " .. rate1 .. " is smaller than current " .. rateInfo.currentRate)
+			rateInfo.currentRate = rate1
+			rateInfo.nextRate = -1
+			rateInfo.changeTime = -1
+			-- txDev:setRate ..
+			dev:getTxQueue(queueNo):setRate(rate1)
+		     else -- rate1 > rateInfo[0].currentRate
+			print("  new rate " .. rate1 .. " is bigger than current " .. rateInfo.currentRate)
+			if rateInfo.nextRate == -1 then
+			   print("     no next rate scheduled")
+			   rateInfo.nextRate = rate1
+			   rateInfo.changeTime = now + 2
+			elseif rateInfo.nextRate == rate1 then
+			   print("     next rate is the same as new rate, do nothing")
+			elseif rateInfo.nextRate >= 0 and rate1 < rateInfo.nextRate then
+			   print("     next rate scheduled " .. rateInfo.nextRate
+				    .. " is bigger than new rate " .. rate1)
+			   rateInfo.nextRate = rate1
+			   -- leave changeTime as is
+			else -- rate1 > rateInfo.nextRate
+			   print("     next rate scheduled " .. rateInfo.nextRate
+				    .. " is smaller than new rate " .. rate1)				
+			   rateInfo.nextRate = rate1
+			   rateInfo.changeTime = now + 2
+			   -- reset changeTime
+			end -- if rate1 < current else if etc. etc.
+		     end
+		  end -- if rate1 is different from current (rate update?)
+	       end -- if pkt.percg.getIsExit ..(fin/ last/ echo?)	       
+	       assert(pkt.percc1:getIsForward() == percc1.IS_FORWARD
+			 or pkt.eth:getType() == 1234)
 	    end -- if packet is forward .. (receiver/ source?)
 	    pkt.percc1:doHton()
 	 end -- for i = 1, rx
@@ -206,18 +232,13 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 		  assert(queue ~= nil)
 		  queues[flowId] = queue
 		  print("assigned queue " .. queue .. " to " .. flowId)
-		  
-		  queueRates[flowId] = ffi.new("rateInfo[?]", 1)
-		  queueRates[flowId][0].currentRate = 0
-		  queueRates[flowId][0].nextRate = -1
-		  queueRates[flowId][0].changeTime = -1
-		  print("assigned a rateInfo struct for " .. flowId)
-		  
+		  queueRates[queue].valid = true
+		  print("assigned a rateInfo struct for " .. flowId)		  
 		  assert(numNew < 100) -- we only have 100 mbufs for new packets
 		  numNew = numNew + 1
 		  -- tell data thread
 		  ipc.sendFcdStartMsg(pipes, msg.flow,
-				      msg.destination, msg.size, queue)		 
+				      msg.destination, msg.size, queue)
 		  print("sent start msg to data for " .. msg.flow)
 		  assert(numNew < 10)
 		  -- fill new packet
@@ -226,7 +247,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 		  assert(flowId >= 100)
 		  pkt.percg:setFlowId(flowId)
 		  pkt.percg:setDestination(msg.destination)
-		  print("filled in new packet for " .. flowId)
+		  print("tx control sends first pkt for " .. msg.size .. "-data-pkt flow " .. pkt.percg:getFlowId())
 		  pkt.percc1:doHton()
 		  -- everything else is default for new packet
 	       end -- if next(freeQueues)..
@@ -244,25 +265,29 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	       assert(flowId >= 100)
 	       local queueNo = queues[flowId]
 	       assert(queueNo ~= nil) 
-	       queueRates[queueNo] = nil
+	       queueRates[queueNo].valid = false
+	       queueRates[queueNo].currentRate = 0
+	       queueRates[queueNo].nextRate = -1
+	       queueRates[queueNo].changeTime = -1
 	       table.insert(freeQueues, queueNo)
 	       queues[flowId] =  nil
+	       print("deallocated queue " .. queueNo .. " for flow " .. flowId)
 	    end
 	 end
 
 	 -- change rates of active flows if it's time
 	 local now = dpdk.getTime()
-	 for queueNo, rateInfo in pairs(queueRates) do
-	    assert(rateInfo ~= nil)
-	    if rateInfo[0].changeTime ~= -1 and rateInfo[0].changeTime <= now then
+	 for flowId, queueNo in pairs(queues) do
+	    assert(queueRates[queueNo].valid)
+	    if queueRates[queueNo].changeTime ~= -1 and queueRates[queueNo].changeTime <= now then
 	       print("change rates for queue " .. queueNo
-			.. " from " .. rateInfo[0].currentRate
-			.. " to " .. rateInfo[0].nextRate)
-	       rateInfo[0].currentRate = rateInfo[0].nextRate
-	       rateInfo[0].nextRate = -1
-	       rateInfo[0].changeTime = -1
+			.. " from " .. queueRates[queueNo].currentRate
+			.. " to " .. queueRates[queueNo].nextRate)
+	       queueRates[queueNo].currentRate = queueRates[queueNo].nextRate
+	       queueRates[queueNo].nextRate = -1
+	       queueRates[queueNo].changeTime = -1
 	       local dTxQueue = dev:getTxQueue(queueNo)
-	       dTxQueue:setRate(rateInfo[0].currentRate)
+	       dTxQueue:setRate(queueRates[queueNo].currentRate)
 	    end -- if rateInfo[0].changeTime ~= nil ..
 	 end -- for queueNo, ..
 	 
