@@ -271,6 +271,20 @@ ffi.cdef [[
 	int usleep(unsigned int usecs);
 ]]
 
+--- waits until first slave core has finished its job
+function mod.waitForFirstSlave(cores_list)
+   while true do
+      for i, v in ipairs(cores_list) do
+	 if (dpdkc.rte_eal_get_lcore_state(v)
+	     ~= dpdkc.RUNNING) then
+	    print("core " .. v .. " is not running anymore.\n")
+	    return
+	 end
+      end
+      ffi.C.usleep(100)	       
+   end
+end
+
 --- waits until all slave cores have finished their jobs
 function mod.waitForSlaves()
 	while true do

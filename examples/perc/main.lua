@@ -90,8 +90,9 @@ function master(...)
 	    app2.applicationSlave(
 	       pipesTxDev,
 	       {["pipes"]= readyPipes, ["id"]=4})
-	    
-	    dpdk.waitForSlaves()
+
+	    dpdk.waitForFirstSlave({core1, core2, core3})
+	    --dpdk.waitForSlaves()
 	    else print("Not all devices are up")
 	 end
 end

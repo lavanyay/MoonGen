@@ -112,8 +112,9 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
       -- what I really need is just flow id -> queue and queue -> config + flowId
       local queues = {}
       local queueRates = ffi.new("rateInfo[?]", 128)
+      -- all but tx 1 for data
       for i=0, 127 do
-	 if (127-i) ~= 0 then 
+	 if (127-i) ~= 1 then 
 	    table.insert(freeQueues, 127-i)
 	 end
 	 queueRates[i].currentRate = 0
@@ -127,6 +128,8 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
       local newBufs = mem:bufArray(100) -- for new packets
       local bufs = memory.bufArray() -- to rx packets and modify and tx
 
+      local noNewPackets = 0
+      
        ipc.waitTillReady(readyInfo)
       print("ready to start control2")
       while dpdk.running() do
@@ -216,12 +219,16 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	 txQueue:sendN(bufs, rx)
 
 	 -- makes new packets
-	 local msgs = ipc.acceptFacStartMsgs(pipes)
+	 local msgs = ipc.fastAcceptMsgs(
+	    pipes, "fastPipeAppToControlStart", "pFacStartMsg", 20)
+	 
 	 if next(msgs) ~= nil then
+	    noNewPackets = 0
 	    print("make  new packets")
 	    newBufs:alloc(PKT_SIZE)
 	    local numNew = 0
-	    for msgNo, msg in pairs(msgs) do
+	    for msgNo, pMsg in pairs(msgs) do
+	       local msg = pMsg[0]
 	       -- get a queue and queueRates state
 	       assert(next(freeQueues) ~= nil) -- TODO()
 	       if next(freeQueues) ~= nil then 
@@ -254,13 +261,19 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	    end -- for msgNo, msg..
 	    txQueue:sendN(newBufs, numNew)
 	    print("Sent " .. numNew .. " new packets")
+	 else
+	    noNewPackets = noNewPackets + 1
+	    if (noNewPackets % 100000 == 0) then
+	       print("No new packets: " .. noNewPackets .. " at time " .. dpdk.getTime())
+	    end
 	 end -- if msgs ~= nil
 	 
 	 -- deallocates queues for completed flows
 	 local msgs = ipc.acceptFdcEndMsgs(pipes)
 	 if next(msgs) ~= nil then
 	    print("deallocate queues from completed flows")
-	    for msgNo, msg in pairs(msgs) do
+	    for msgNo, pMsg in pairs(msgs) do
+	       local msg = pMsg[0]
 	       local flowId = msg.flow
 	       assert(flowId >= 100)
 	       local queueNo = queues[flowId]

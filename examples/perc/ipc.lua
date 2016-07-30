@@ -22,7 +22,7 @@ function ipcMod.sendFacStartMsg(pipes, flow, destination, size, startTime)
    msg[0].destination = destination
    msg[0].size = size
    msg[0].startTime = startTime
-   ipcMod.sendMsgs(pipes, "fastPipeAppToControlStart", msg)
+   pipes["fastPipeAppToControlStart"]:send(msg)
    --return msg
 end
 
@@ -32,14 +32,14 @@ function ipcMod.sendFcdStartMsg(pipes, flow, destination, size, queue)
    msg[0].destination = destination
    msg[0].size = size
    msg[0].queue = queue
-   ipcMod.sendMsgs(pipes, "fastPipeControlToDataStart", msg)
+   pipes["fastPipeControlToDataStart"]:send(msg)
    --return msg
 end
 
 function ipcMod.sendFacEndMsg(pipes, flow)
    local msg = ffi.new("facEndMsg[?]", 1)
    msg[0].flow = flow
-   ipcMod.sendMsgs(pipes, "fastPipeAppToControlEnd", msg)
+   pipes["fastPipeAppToControlEnd"]:send(msg)
    --return msg
 end
 
@@ -47,24 +47,24 @@ function ipcMod.sendFdcEndMsg(pipes, flow, endTime)
    local msg = ffi.new("fdcEndMsg[?]", 1)
    msg[0].flow = flow
    msg[0].endTime = endTime
-   ipcMod.sendMsgs(pipes, "fastPipeDataToControlEnd", msg)
+   pipes["fastPipeDataToControlEnd"]:send(msg)
    --return msg
 end
 
 function ipcMod.acceptFacStartMsgs(pipes)
-   return ipcMod.acceptMsgs(pipes, "fastPipeAppToControlStart", "pFacStartMsg")
+   return ipcMod.fastAcceptMsgs(pipes, "fastPipeAppToControlStart", "pFacStartMsg", 20)
 end
 
 function ipcMod.acceptFcdStartMsgs(pipes)
-   return ipcMod.acceptMsgs(pipes, "fastPipeControlToDataStart", "pFcdStartMsg")
+   return ipcMod.fastAcceptMsgs(pipes, "fastPipeControlToDataStart", "pFcdStartMsg", 20)
 end
 
 function ipcMod.acceptFacEndMsgs(pipes)
-   return ipcMod.acceptMsgs(pipes, "fastPipeAppToControlEnd", "pFacEndMsg")
+   return ipcMod.fastAcceptMsgs(pipes, "fastPipeAppToControlEnd", "pFacEndMsg", 20)
 end
 
 function ipcMod.acceptFdcEndMsgs(pipes)
-   return ipcMod.acceptMsgs(pipes, "fastPipeDataToControlEnd", "pFdcEndMsg")
+   return ipcMod.fastAcceptMsgs(pipes, "fastPipeDataToControlEnd", "pFdcEndMsg", 20)
 end
 
 
@@ -92,8 +92,42 @@ function ipcMod.acceptMsgs(pipes, pipeName, msgType)
 	 msg = ffi.cast(msgType, msg)
       end
       msgs[numMsgs] = msg
-      print("Got msg # " .. tostring(numMsgs) .. " for flow " .. tostring(msg.flow) .. " on pipe " .. pipeName)
+      print("Got msg # " .. tostring(numMsgs) ..
+	    " for flow " .. tostring(msg.flow)
+	       .. " on pipe " .. pipeName)
       numMsgs = numMsgs - 1
+   end
+   return msgs
+end	 
+
+-- try to get as many packets as possible in waitxTenUs x 10us
+function ipcMod.fastAcceptMsgs(pipes, pipeName, msgType, waitxTenUs)
+   if pipes == nil or pipes[pipeName] == nil then
+      print("acceptMsgs on nil pipe! return!!")
+      return
+   end 
+
+   local pipe = pipes[pipeName]
+   local msgs = {}
+   
+   --local numMsgs = pipe:count()
+   --if numMsgs ~= 0 then
+   --   print(tostring(numMsgs) .. " msgs on pipe " .. pipeName)	
+   --end
+
+   local numMsgs = 1
+   assert(msgType ~= nil)
+   assert(waitxTenUs > 0)
+   while waitxTenUs > 0 and numMsgs < 2 do
+      local msg = pipe:tryRecv(1)
+      if (msg ~= nil) then
+	 msg = ffi.cast(msgType, msg)
+	 msgs[numMsgs] = msg
+	 print("Got msg # " .. tostring(numMsgs) ..
+	       " for flow " .. tostring(msg[0].flow) .. " on pipe " .. pipeName)
+	 numMsgs = numMsgs + 1
+      end
+      waitxTenUs = waitxTenUs - 1
    end
    return msgs
 end	 

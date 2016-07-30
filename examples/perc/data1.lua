@@ -46,7 +46,8 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	   local msgs = ipc.acceptFcdStartMsgs(pipes)
 	   if next(msgs) ~= nil then
 	      -- print("dataSlave: accepted FcdStartMsgs")
-	      for msgNo, msg in pairs(msgs) do
+	      for msgNo, pMsg in pairs(msgs) do
+		 local msg = pMsg[0]
 		 numPacketsLeft[msg.flow] = msg.size
 		 queues[msg.flow] = msg.queue
 	      end		
@@ -57,8 +58,8 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	   --  say cuz of insufficient credits??	case for s/w rate limiting?
 	   for flow, queueNo in pairs(queues) do
 	      local numLeft = numPacketsLeft[flow]
-	      --print("sending " .. numLeft .. " for "
-	      --	       .. flow .. " on " .. queueNo)
+	      print("sending " .. numLeft .. " for "
+	      	       .. flow .. " on " .. queueNo)
 	      assert(numLeft >= 0)	      
 	      local queue = dev:getTxQueue(queueNo)
 		 
