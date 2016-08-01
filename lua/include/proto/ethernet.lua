@@ -38,8 +38,19 @@ eth.TYPE_ARP = 0x0806
 eth.TYPE_IP6 = 0x86dd
 --- EtherType for Ptp
 eth.TYPE_PTP = 0x88f7
---  EtherType for Perc
+--  EtherType for Perc Control
 eth.TYPE_PERCG = 0x0708
+
+-- These extra types are used to
+--  steer packets into specific Rx queues
+
+--  EtherType for Perc Data
+eth.TYPE_PERC_DATA = 0x1212
+--  EtherType for Packet to drop
+eth.TYPE_DROP = 0x1111
+--  EtherType for FIN ACK data packet
+eth.TYPE_FINACK = 0x2222
+
 --- EtherType for LACP (Actually, 'Slow Protocols')
 eth.TYPE_LACP = 0x8809
 
@@ -188,7 +199,13 @@ function etherHeader:getTypeString()
 	elseif type == eth.TYPE_LACP then
 		cleartext = "(LACP)"
 	elseif type == eth.TYPE_PERCG then
-		cleartext = "(PERCG)"
+	   cleartext = "(PERCG)"
+	elseif type == eth.TYPE_PERCD then
+	   cleartext = "(PERCD)"
+	elseif type == eth.TYPE_DROP then
+	   cleartext = "(DROP)"
+	elseif type == eth.TYPE_FINACK then
+	   cleartext = "(DATA FINACK)"
 	else	   
 		cleartext = "(unknown)"
 	end

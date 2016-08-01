@@ -10,16 +10,14 @@ local percc1 = require "proto.percc1"
 local eth = require "proto.ethernet"
 local pcap = require "pcap"
 local ipc = require "examples.perc.ipc"
-
+local perc_constants = require "examples.perc.constants"
 local PKT_SIZE	= 60
 
 data1Mod = {}
 
 
 function data1Mod.dataSlave(dev, pipes, readyInfo)
-	-- print("starting loadTxDataSlave")
-	local numPacketsLeft = {}
-	local queues = {}
+	-- print("starting dataSlave")
 	-- one counter for total data throughput
 	--local ctr = stats:newDevTxCounter(dev, "plain")
 	ipc.waitTillReady(readyInfo)
@@ -30,53 +28,71 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 			ethSrc = queue,
 			ethDst = "10:11:12:13:14:15", -- ready info id??
 			ip4Dst = "192.168.1.1",
-			udpSrc = 1234, -- flow id
-			udpDst = 5678,	
+			udpSrc = 0, -- flow id
+			udpDst = 0, -- packets left	
 		}
 	end)
-	-- TODO(lav): why 128?
-	bufs = mem:bufArray(128)
-	-- print("dataSlave: created bufArray")
+
+	-- state for tx
+	-- numPacketsLeft[flow]
+	-- queue[flow]
+	-- txBufs
+	-- rxCtr
+	local numPacketsLeft = {}
+	local queues = {}
+	local txBufs = mem:bufArray(128)
+	local txBufsFinAck = mem:bufArray(128)
+	local txCtr = stats:newDevTxCounter(dev, "plain")
 	
-	-- per flow state: numPacketsLeft, queues
-	--  all indexed by flow and table of flows	
+	-- state for rx
+	-- numPacketsReceived[flow]
+	-- rxBufs
+	-- txCtr
+	local numPacketsReceived = {} -- flows to number of packets received
+	local rxBufs = memory.bufArray() -- to receive data packets
+	local rxBufsFinAck = memory.bufArray()
+	local rxQueue = dev:getRxQueue(perc_constants.DATA_RXQUEUE)
+	local rxQueueFinAck = dev:getRxQueue(perc_constants.FINACK_QUEUE)
+	local txQueueFinAck = dev:getTxQueue(perc_constants.FINACK_QUEUE)
+	local rxCtr = stats:newDevRxCounter(dev, "plain")
+
 	local i = 0
 	while dpdk.running() do	   
 	   local now = dpdk.getTime()
+
+	   -- NEW FLOWS TO SEND
 	   local msgs = ipc.acceptFcdStartMsgs(pipes)
 	   if next(msgs) ~= nil then
 	      -- print("dataSlave: accepted FcdStartMsgs")
-	      for msgNo, pMsg in pairs(msgs) do
-		 local msg = pMsg[0]
+	      for msgNo, msg in pairs(msgs) do
+		 assert(msg.flow >= 100)
+		 assert(numPacketsLeft[msg.flow] == nil)
+		 assert(queues[msg.flow] == nil)
 		 numPacketsLeft[msg.flow] = msg.size
 		 queues[msg.flow] = msg.queue
+		 -- print("dataSlave: new flow " .. msg.flow .. " of size " .. msg.size .. " on queue " .. msg.queue)
 	      end		
 	   end -- ends if next(msgs)..
 
-	   -- TODO(lav): some way to avoid copying all remaining bytes every time?	   
-	   --  what if queue doesn't have any more room. 
-	   --  say cuz of insufficient credits??	case for s/w rate limiting?
+	   -- SENDING DATA PACKETS
 	   for flow, queueNo in pairs(queues) do
 	      local numLeft = numPacketsLeft[flow]
-	      print("sending " .. numLeft .. " for "
-	      	       .. flow .. " on " .. queueNo)
 	      assert(numLeft >= 0)	      
-	      local queue = dev:getTxQueue(queueNo)
-		 
+	      local queue = dev:getTxQueue(queueNo)		 
 	      local numToSend = 128
 	      if numLeft < 128 then numToSend = numLeft end
-	      bufs:allocN(PKT_SIZE, numToSend)
-
+	      txBufs:allocN(PKT_SIZE, numToSend)
 	      for i=1,numToSend do		 
-		 local pkt = bufs[i]:getUdpPacket()
+		 local pkt = txBufs[i]:getUdpPacket()
 		 pkt.udp:setSrcPort(tonumber(flow))
+		 pkt.udp:setDstPort(numLeft-i)
+		 -- number of packets left, 0 for last packet
 		 pkt.eth.src:set(queueNo)
 	      end
-
-	      local numSent = queue:trySendN(bufs, numToSend)
-	      --ctr:update()
+	      txBufs:offloadUdpChecksums()
+	      local numSent = queue:trySendN(txBufs, numToSend)
 	      numLeft = numLeft - numSent
-	      --print("Sent " .. numSent .. " packets of flow " .. flow
+	      --print("Sent " .. numSent .. " data packets of flow " .. flow
 	      -- 	       .. ", " .. numLeft .. " to go")
 	      assert(numLeft >= 0)	      
 	      numPacketsLeft[flow] = numLeft
@@ -84,13 +100,67 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 		 local now = dpdk.getTime()
 		 numPacketsLeft[flow] = nil
 		 queues[flow] = nil
-		 -- TODO(lav): risky? setting value for existing key to nil, while iterating over table
-		 ipc.sendFdcEndMsg(pipes, flow, now)
+		 ipc.sendFdcFinMsg(pipes, flow, now)
+	      end	      
+	   end -- ends for flow, queueNo in queues
+	   -- also need to send FIN-ACKs for received packets
+	   --txCtr:update()
+	   
+	   -- RECEIVE DATA PACKETS
+	   local rx = rxQueue:tryRecv(rxBufs, 128)
+	   -- if (rx > 0) then print("Received " .. rx .. " data packets") end
+	   local numFinAcks = 0
+	   local finAckPending = {}
+	   for i = 1, rx do
+	      local buf = rxBufs[i]
+	      local flowId = buf.getUdpPackets.udp:getSrc()
+	      local left = buf.getUdpPackets.udp:getDst()
+	      if numPacketsReceived[flowId] == nil then
+		 numPacketsReceived[flowId] = 0
 	      end
-	   end -- ends for flow, queueNo in queues	   
+	      numPacketsReceived[flowId] = numPacketsReceived[flowId] + 1
+	      if left == 0 then
+		 local now = dpdk.getTime()
+		 --print("Rx " .. numPacketsReceived[flowId]
+		 -- 	  .. " packets of flow " .. flowId)
+		 finAckPending[flowId] = numPacketsReceived[flowId]
+		 numFinAcks = numFinAcks + 1
+	      end
+	      rxBufs:freeAll()
+	   end
+	   --rxCtr:update()
+
+	   
+	   if numFinAcks > 0 then
+	      -- SEND FIN-ACKS, received on a different queue
+	      txBufsFinAck:allocN(numFinAcks)
+	      local bufNo = 1
+	      for flowId, numPkts in pairs(finAckPending) do
+		 assert(bufNo <= numFinAcks)
+		 local pkt = txBufsFinAck[bufNo].getUdpPacket()
+		 pkt.udp.src:set(flowId)
+		 pkt.udp.dst:set(numPkts)
+		 pkt.eth.type:set(5678) -- filter into separate queue
+		 bufNo = bufNo + 1
+	      end
+	      local numSent = txQueueFinAck:sendN(txBufsFinAck, numFinAcks)
+	   end
+
+	   -- RECEIVE FIN-ACKS
+	   --rxBufsFinAck:alloc(PKT_SIZE)	   
+	   local rx = rxQueueFinAck:tryRecv(rxBufsFinAck, 128)
+	   for i = 1, rx do	      
+	      local now = dpdk.getTime()
+	      local buf = rxBufsFinAck[i]
+	      local flowId = buf.getUdpPacket.udp:getSrc()
+	      local received = buf.getUdpPacket.udp:getDst()
+	      ipc.sendFdcFinAckMsg(pipes, flowId, received, now)
+	   end
+	   rxBufs:freeAll()
 	   i = i + 1
 	end -- ends while dpdk.running()
-	--ctr:finalize()
+	txCtr:finalize()
+	rxCtr:finalize()
 end
 
 return data1Mod

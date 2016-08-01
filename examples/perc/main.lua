@@ -10,6 +10,7 @@ local percg = require "proto.percg"
 local percc1 = require "proto.percc1"
 local eth = require "proto.ethernet"
 local pcap = require "pcap"
+local perc_constants = require "examples.perc.constants"
 
 local ipc = require "examples.perc.ipc"
 -- application thread: talks with control plane
@@ -29,7 +30,8 @@ local data1 = require "examples.perc.data1"
  -- 11B b/n control and host state, 6 b/n .. agg 80
 
 function master(...)	 
-	 -- cores 1..7 part of CPU 1 in socket 1
+   --collectgarbage("stop")
+   -- cores 1..7 part of CPU 1 in socket 1
 	 -- port 0 is attached to socket 1
 	 -- cores 8..16 part of CPU 2 in socket 2
 	 -- port 1 is attached to socket 2
@@ -49,12 +51,17 @@ function master(...)
 	 core3 = (thisCore + 3)%numCores
 	 
 	 local txPort = 0
-	 txDev = device.config{ port = txPort, txQueues = 20, rxQueues = 2}
-	 txDev:l2Filter(eth.TYPE_PERCG, 1)
-
+	 txDev = device.config{ port = txPort, txQueues = 20, rxQueues = 4}
+	 txDev:l2Filter(eth.TYPE_PERCG, perc_constants.CONTROL_QUEUE)
+	 --assert(filter.DROP ~= nil)
+	 txDev:l2Filter(eth.TYPE_DROP, perc_constants.DROP_QUEUE)
+	 txDev:l2Filter(eth.TYPE_FINACK, perc_constants.FINACK_QUEUE)
+	 
 	 local rxPort = 1
-	 rxDev = device.config{ port = rxPort, txQueues = 20, rxQueues = 2}
-	 rxDev:l2Filter(eth.TYPE_PERCG, 1)
+	 rxDev = device.config{ port = rxPort, txQueues = 20, rxQueues = 4}
+	 rxDev:l2Filter(eth.TYPE_PERCG, perc_constants.CONTROL_QUEUE)
+	 rxDev:l2Filter(eth.TYPE_FINACK, perc_constants.FINACK_QUEUE)
+	 rxDev:l2Filter(eth.TYPE_DROP, perc_constants.DROP_QUEUE)
 
 	 numLinksUp = device.waitForLinks()
 
