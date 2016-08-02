@@ -49,6 +49,7 @@ function master(...)
 	 core1 = (thisCore + 1)%numCores
 	 core2 = (thisCore + 2)%numCores
 	 core3 = (thisCore + 3)%numCores
+	 core4 = (thisCore + 4)%numCores
 	 
 	 local txPort = 0
 	 txDev = device.config{ port = txPort, txQueues = 20, rxQueues = 4}
@@ -76,7 +77,7 @@ function master(...)
 
 	    -- control and application on dev0, control on dev1
 	    -- pipes to sync all participating threads
-	    local readyPipes = ipc.getReadyPipes(4)
+	    local readyPipes = ipc.getReadyPipes(5)
 	    
 
 	    dpdk.launchLuaOnCore(
@@ -94,11 +95,16 @@ function master(...)
 	       pipesTxDev,
 	       {["pipes"]= readyPipes, ["id"]=3})
 
-	    app2.applicationSlave(
-	       pipesTxDev,
+	    dpdk.launchLuaOnCore(
+	       core4, "loadDataSlave", rxDev,
+	       pipesRxDev,
 	       {["pipes"]= readyPipes, ["id"]=4})
 
-	    dpdk.waitForFirstSlave({core1, core2, core3})
+	    app2.applicationSlave(
+	       pipesTxDev,
+	       {["pipes"]= readyPipes, ["id"]=5})
+
+	    dpdk.waitForFirstSlave({core1, core2, core3, core4})
 	    --dpdk.waitForSlaves()
 	    else print("Not all devices are up")
 	 end

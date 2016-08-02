@@ -275,9 +275,10 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	 end -- if msgs ~= nil
 	 
 	 -- deallocates queues for completed flows
-	 local msgs = ipc.fastAcceptMsgs(
-	    pipes, "fastPipeDataToControlFin",
-	    "pFdcFinMsg", 20) --ipc.acceptFdcEndMsgs(pipes)
+	 local msgs =
+	    ipc.fastAcceptMsgs(
+	       pipes, "fastPipeDataToControlFin",
+	       "pFdcFinMsg", 20) --ipc.acceptFdcEndMsgs(pipes)
 	 if next(msgs) ~= nil then
 	    --print("deallocate queues from completed flows")
 	    for msgNo, msg in pairs(msgs) do
@@ -313,17 +314,12 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	 end -- for queueNo, ..
 
 	 -- tells applications about flows that finished data completely
-	 local msgs = ipc.fastAcceptMsgs(
-	    pipes, "fastPipeDataToControlFinAck",
-	    "pFdcFinAckMsg", 20) --ipc.acceptFdcEndMsgs(pipes)
+	 local msgs = ipc.acceptFdcFinAckMsgs(pipes)
 	 if next(msgs) ~= nil then
-	    print("deallocate queues from completed flows")
+	    --print("deallocate queues from completed flows")
 	    for msgNo, msg in pairs(msgs) do
-	       ipc.sendMsgs(pipes, "slowPipeControlToApp",
-			    {["msg"] = ("data end flow " .. msg.flow .. " received "
-					   .. msg.size .. " packets"),
-			       ["now"] = msg.endTime})
-
+	       ipc.sendFcaFinAckMsg(pipes, msg.flow, msg.size,
+				 msg.endTime)
 	    end
 	 end
       end -- while dpdk.running()	

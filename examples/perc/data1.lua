@@ -11,13 +11,13 @@ local eth = require "proto.ethernet"
 local pcap = require "pcap"
 local ipc = require "examples.perc.ipc"
 local perc_constants = require "examples.perc.constants"
-local PKT_SIZE	= 60
+local PKT_SIZE	= 1500
 
 data1Mod = {}
 
 
 function data1Mod.dataSlave(dev, pipes, readyInfo)
-	-- print("starting dataSlave")
+   print("starting dataSlave on " .. dpdk.getCore())
 	-- one counter for total data throughput
 	--local ctr = stats:newDevTxCounter(dev, "plain")
 	ipc.waitTillReady(readyInfo)
@@ -113,9 +113,10 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	   local finAckPending = {}
 	   for i = 1, rx do
 	      local buf = rxBufs[i]
-	      local flowId = buf.getUdpPackets.udp:getSrc()
-	      local left = buf.getUdpPackets.udp:getDst()
-	      if numPacketsReceived[flowId] == nil then
+	      local pkt = buf:getUdpPacket()
+	      local flowId = pkt.udp:getSrcPort()
+	      local left = pkt.udp:getDstPort()
+	      if numPacketsReceived[flowId] == nil then	
 		 numPacketsReceived[flowId] = 0
 	      end
 	      numPacketsReceived[flowId] = numPacketsReceived[flowId] + 1
@@ -126,21 +127,21 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 		 finAckPending[flowId] = numPacketsReceived[flowId]
 		 numFinAcks = numFinAcks + 1
 	      end
-	      rxBufs:freeAll()
 	   end
+	   rxBufs:freeAll()	
 	   --rxCtr:update()
 
 	   
 	   if numFinAcks > 0 then
 	      -- SEND FIN-ACKS, received on a different queue
-	      txBufsFinAck:allocN(numFinAcks)
+	      txBufsFinAck:allocN(PKT_SIZE, numFinAcks)
 	      local bufNo = 1
 	      for flowId, numPkts in pairs(finAckPending) do
 		 assert(bufNo <= numFinAcks)
-		 local pkt = txBufsFinAck[bufNo].getUdpPacket()
-		 pkt.udp.src:set(flowId)
-		 pkt.udp.dst:set(numPkts)
-		 pkt.eth.type:set(5678) -- filter into separate queue
+		 local pkt = txBufsFinAck[bufNo]:getUdpPacket()
+		 pkt.udp:setSrcPort(flowId)
+		 pkt.udp:setDstPort(numPkts)
+		 pkt.eth:setType(eth.TYPE_FINACK) -- filter into separate queue
 		 bufNo = bufNo + 1
 	      end
 	      local numSent = txQueueFinAck:sendN(txBufsFinAck, numFinAcks)
@@ -152,8 +153,9 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	   for i = 1, rx do	      
 	      local now = dpdk.getTime()
 	      local buf = rxBufsFinAck[i]
-	      local flowId = buf.getUdpPacket.udp:getSrc()
-	      local received = buf.getUdpPacket.udp:getDst()
+	      local pkt = buf:getUdpPacket()
+	      local flowId = pkt.udp:getSrcPort()
+	      local received = pkt.udp:getDstPort()
 	      ipc.sendFdcFinAckMsg(pipes, flowId, received, now)
 	   end
 	   rxBufs:freeAll()

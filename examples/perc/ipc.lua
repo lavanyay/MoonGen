@@ -19,8 +19,15 @@ typedef fcdStartMsg* pFcdStartMsg;
 typedef struct { int flow; double endTime, valid;} fdcFinMsg;  
 typedef fdcFinMsg* pFdcFinMsg;
 // got data FIN ACK for flow at time
-typedef struct { int flow, size; double endTime, valid;} fdcFinAckMsg;  
+typedef struct { int flow, size; double endTime, valid;} fdcFinAckMsg;
 typedef fdcFinAckMsg* pFdcFinAckMsg;
+
+// finished sending packets for flow at time
+typedef struct { int flow; double endTime, valid;} fcaFinMsg;  
+typedef fcaFinMsg* pFcaFinMsg;
+// got data FIN ACK for flow at time
+typedef struct { int flow, size; double endTime, valid;} fcaFinAckMsg;
+typedef fcaFinAckMsg* pFcaFinAckMsg;
 ]]
 
 
@@ -55,7 +62,7 @@ function ipcMod.sendFdcFinMsg(pipes, flow, endTime)
 end
 
 function ipcMod.sendFcaFinMsg(pipes, flow, endTime)
-   local msg = ffi.new("fdcFinMsg")
+   local msg = ffi.new("fcaFinMsg")
    msg.flow = flow
    msg.endTime = endTime
    msg.valid = 1234
@@ -72,6 +79,17 @@ function ipcMod.sendFdcFinAckMsg(pipes, flow, received, endTime)
    pipes["fastPipeDataToControlFinAck"]:send(msg)
    --return msg
 end
+
+function ipcMod.sendFcaFinAckMsg(pipes, flow, received, endTime)
+   local msg = ffi.new("fcaFinAckMsg")
+   msg.flow = flow
+   msg.size = received
+   msg.endTime = endTime
+   msg.valid = 1234
+   pipes["fastPipeControlToAppFinAck"]:send(msg)
+   --return msg
+end
+
 function ipcMod.acceptFacStartMsgs(pipes)
    return ipcMod.fastAcceptMsgs(pipes, "fastPipeAppToControlStart", "pFacStartMsg", 20)
 end
@@ -85,11 +103,15 @@ function ipcMod.acceptFdcFinMsgs(pipes)
 end
 
 function ipcMod.acceptFcaFinMsgs(pipes)
-   return ipcMod.fastAcceptMsgs(pipes, "fastPipeControlToAppFin", "pFdcFinMsg", 20)
+   return ipcMod.fastAcceptMsgs(pipes, "fastPipeControlToAppFin", "pFcaFinMsg", 20)
 end
 
 function ipcMod.acceptFdcFinAckMsgs(pipes)
    return ipcMod.fastAcceptMsgs(pipes, "fastPipeDataToControlFinAck", "pFdcFinAckMsg", 20)
+end
+
+function ipcMod.acceptFcaFinAckMsgs(pipes)
+   return ipcMod.fastAcceptMsgs(pipes, "fastPipeControlToAppFinAck", "pFcaFinAckMsg", 20)
 end
 
 function ipcMod.sendMsgs(pipes, pipeName, msg)	 
@@ -173,11 +195,12 @@ function ipcMod.getInterVmPipes()
    -- appToData: to end flow
    -- slowPipe ApplicationSlave: (t, start/ change rate/ end of data/ end of control) 
 	 local pipes =  {
-	    ["fastPipeAppToControlStart"] = pipe.newFastPipe(10),
-	    ["fastPipeControlToDataStart"] = pipe.newFastPipe(10), 
-	    ["fastPipeDataToControlFin"] = pipe.newFastPipe(10),
-	    ["fastPipeDataToControlFinAck"] = pipe.newFastPipe(10),
-	    ["fastPipeControlToAppFin"] = pipe.newFastPipe(),
+	    ["fastPipeAppToControlStart"] = pipe.newFastPipe(20),
+	    ["fastPipeControlToDataStart"] = pipe.newFastPipe(20), 
+	    ["fastPipeDataToControlFin"] = pipe.newFastPipe(20),
+	    ["fastPipeDataToControlFinAck"] = pipe.newFastPipe(20),
+	    ["fastPipeControlToAppFin"] = pipe.newFastPipe(20),
+	    ["fastPipeControlToAppFinAck"] = pipe.newFastPipe(20),
 	    ["slowPipeControlToApp"] = pipe.newSlowPipe()
 	 }
 	 return pipes
@@ -213,6 +236,7 @@ function ipcMod.waitTillReady(readyInfo)
 	 	 while numReadyMsgs < numPipes-1 do
 	 	       if myPipe:recv() ~= nil then 
 	 	       	  numReadyMsgs = numReadyMsgs + 1
+			  print("Received " .. numReadyMsgs .. " ready messages on pipe # " .. readyInfo.id)
 	 	 	  end
 	 	       end
 
