@@ -11,7 +11,7 @@ local percc1 = require "proto.percc1"
 local eth = require "proto.ethernet"
 local pcap = require "pcap"
 local perc_constants = require "examples.perc.constants"
-
+local monitor = require "examples.perc.monitor"
 local ipc = require "examples.perc.ipc"
 -- application thread: talks with control plane
 -- thread via ipc functions sendFacStartMsg,
@@ -30,6 +30,7 @@ local data1 = require "examples.perc.data1"
  -- 11B b/n control and host state, 6 b/n .. agg 80
 
 function master(...)	 
+   print("hello")
    --collectgarbage("stop")
    -- cores 1..7 part of CPU 1 in socket 1
 	 -- port 0 is attached to socket 1
@@ -38,18 +39,17 @@ function master(...)
 	 local numArgs = table.getn(arg)
 
 	 local txDev = -1
-	 local core1 = -1
-	 local core2 = -1
 	 local rxDev = -1
 
 	 print("Got " .. numArgs .. " command-line arguments.")
 
 	 local thisCore = dpdk.getCore()
 	 local numCores = 8
-	 core1 = (thisCore + 1)%numCores
-	 core2 = (thisCore + 2)%numCores
-	 core3 = (thisCore + 3)%numCores
-	 core4 = (thisCore + 4)%numCores
+	 local core1 = (thisCore + 1)%numCores
+	 local core2 = (thisCore + 2)%numCores
+	 local core3 = (thisCore + 3)%numCores
+	 local core4 = (thisCore + 4)%numCores
+	 local core5 = (thisCore + 5)%numCores
 	 
 	 local txPort = 0
 	 txDev = device.config{ port = txPort, txQueues = 20, rxQueues = 4}
@@ -69,15 +69,20 @@ function master(...)
 	 print("waiting for links")
 	 if (numLinksUp == 2) then 
 	    dpdk.setRuntime(1000)
-
+	    print("all inks are up")
 	    -- per-device pipes for app/control/data
 	    --  communication
 	    local pipesTxDev = ipc.getInterVmPipes()
-	    local pipesRxDev = ipc.getInterVmPipes() 
-
+	    local pipesRxDev = ipc.getInterVmPipes()
+	    print("About to call monitor.getPerVmPipes({0, 1})")
+	    local monitorPipes = monitor.getPerVmPipes({0, 1})
+	    for pipeName, pipe in pairs(monitorPipes) do
+	       print(pipeName)
+	    end
+	    
 	    -- control and application on dev0, control on dev1
 	    -- pipes to sync all participating threads
-	    local readyPipes = ipc.getReadyPipes(5)
+	    local readyPipes = ipc.getReadyPipes(6)
 	    
 
 	    dpdk.launchLuaOnCore(
@@ -100,9 +105,17 @@ function master(...)
 	       pipesRxDev,
 	       {["pipes"]= readyPipes, ["id"]=4})
 
+	    dpdk.launchLuaOnCore(
+	       core5, "loadMonitorSlave", monitorPipes,
+	       {["pipes"]= readyPipes, ["id"]=5})
+
+	    local appMonitorPipe = monitorPipes["app-0"]
+	    assert(appMonitorPipe ~= nil)
+	    assert(app2.applicationSlave ~= nil)
 	    app2.applicationSlave(
 	       pipesTxDev,
-	       {["pipes"]= readyPipes, ["id"]=5})
+	       {["pipes"]= readyPipes, ["id"]=6},
+	       appMonitorPipe)
 
 	    dpdk.waitForFirstSlave({core1, core2, core3, core4})
 	    --dpdk.waitForSlaves()
@@ -116,6 +129,10 @@ end
 
 function loadDataSlave(dev, pipes, readyInfo)
    data1.dataSlave(dev, pipes, readyInfo)
+end
+
+function loadMonitorSlave(monitorPipes, readyInfo)
+   monitor.monitorSlave(monitorPipes, readyInfo)
 end
 
 
