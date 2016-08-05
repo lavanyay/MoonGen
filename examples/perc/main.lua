@@ -84,16 +84,19 @@ function master(...)
 	    -- pipes to sync all participating threads
 	    local readyPipes = ipc.getReadyPipes(6)
 	    
-
+	    local controlMonitorPipe = monitorPipes["control-0"]
+	    assert(controlMonitorPipe ~= nil)
 	    dpdk.launchLuaOnCore(
 	       core1, "loadControlSlave", txDev,
 	       pipesTxDev,
-	       {["pipes"]= readyPipes, ["id"]=1})
+	       {["pipes"]= readyPipes, ["id"]=1},
+	       controlMonitorPipe)
 	    
 	    dpdk.launchLuaOnCore(
 	       core2, "loadControlSlave", rxDev,
 	       pipesRxDev,
-	       {["pipes"]= readyPipes, ["id"]=2})
+	       {["pipes"]= readyPipes, ["id"]=2},
+	       nil)
 
 	    dpdk.launchLuaOnCore(
 	       core3, "loadDataSlave", txDev,
@@ -123,8 +126,8 @@ function master(...)
 	 end
 end
 
-function loadControlSlave(dev, pipes, readyInfo)
-   control1.controlSlave(dev, pipes, readyInfo)
+function loadControlSlave(dev, pipes, readyInfo, monitorPipe)
+   control1.controlSlave(dev, pipes, readyInfo, monitorPipe)
 end
 
 function loadDataSlave(dev, pipes, readyInfo)

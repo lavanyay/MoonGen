@@ -211,10 +211,10 @@ function checksum(data, len)
 	data = ffi.cast("uint16_t*", data)
 	local cs = 0
 	for i = 0, len / 2 - 1 do
-		cs = cs + data[i]
-		if cs >= 2^16 then
-			cs = band(cs, 0xFFFF) + 1
-		end
+	   cs = cs + data[i]
+	   if cs >= 2^16 then
+	      cs = band(cs, 0xFFFF) + 1
+	   end
 	end
 	-- missing the very last uint_8 for odd sized packets
 	-- note that this access is always valid in MoonGen
@@ -225,7 +225,7 @@ function checksum(data, len)
 		cs = cs + band(data[len / 2], 0xFF)
 		if cs >= 2^16 then
 			cs = band(cs, 0xFFFF) + 1
-		end
+		end		
 	end
 	return band(bnot(cs), 0xFFFF)
 end

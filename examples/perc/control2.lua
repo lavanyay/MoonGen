@@ -10,9 +10,9 @@ local percc1 = require "proto.percc1"
 local eth = require "proto.ethernet"
 local pcap = require "pcap"
 local perc_constants = require "examples.perc.constants"
-
+local monitor = require "examples.perc.monitor" 
 local ipc = require "examples.perc.ipc"
-local EndHost = require "examples.perc.end_host"
+
 
 local PKT_SIZE	= 80
 
@@ -77,7 +77,7 @@ function control2Mod.percc1ProcessAndGetRate(pkt)
    return bnRate1
 end
 
-function control2Mod.controlSlave(dev, pipes, readyInfo)
+function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
       local thisCore = dpdk.getCore()
       print("Running control slave on core " .. thisCore)
 
@@ -101,7 +101,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 		   ethType = eth.TYPE_PERCG
 					  }
       end)
-      endHost = EndHost.new(mem, dev, readyInfo.id, pipes, PKT_SIZE) 
+      
       local lastRxTime = 0
       local lastTxTime = 0
       local rxQueue = dev:getRxQueue(perc_constants.CONTROL_QUEUE)
@@ -120,7 +120,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	 and (127-i) ~= perc_constants.DROP_QUEUE then 
 	    table.insert(freeQueues, 127-i)
 	 end
-	 queueRates[i].currentRate = 0
+	 queueRates[i].currentRate = 1
 	 queueRates[i].nextRate = -1
 	 queueRates[i].changeTime = -1
 	 queueRates[i].valid = false
@@ -134,8 +134,50 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
       local noNewPackets = 0
       
        ipc.waitTillReady(readyInfo)
-      print("ready to start control2")
-      while dpdk.running() do
+       print("ready to start control2")
+       local lastPeriodic = dpdk.getTime()
+       local numLoopsSinceStart = 0       
+       local lastLoggedDpdkLoopStartTime = 0
+
+       while dpdk.running() do
+	  local dpdkLoopStartTime = dpdk.getTime()
+	  numLoopsSinceStart = numLoopsSinceStart + 1
+
+	  if monitorPipe ~= nil and numLoopsSinceStart % 100 == 0 then
+	     monitorPipe:send(
+		ffi.new("genericMsg",
+			{["valid"]= 1234,
+			   ["i1"]= numLoopsSinceStart,
+			   ["msgType"]= monitor.typeControlDpdkLoopStartTime,
+			   ["time"]= (dpdkLoopStartTime - lastLoggedDpdkLoopStartTime) * 1e3 }))
+	     lastLoggedDpdkLoopStartTime = dpdkLoopStartTime
+	  end
+
+	 -- log actual data rates of all active queues every PERIOD
+	 if dpdkLoopStartTime > lastPeriodic + perc_constants.LOG_EVERY_N_SECONDS then
+	    lastPeriodic = dpdkLoopStartTime
+	    for flowId, queueNo in pairs(queues) do
+	       assert(queueRates[queueNo].valid)
+	       local rateInfo = queueRates[queueNo]
+	       local dTxQueue = dev:getTxQueue(queueNo)
+	       local configuredRate = rateInfo.currentRate
+	       local actualRate = dTxQueue:getTxRate()			
+
+	       if monitorPipe ~= nil then
+		  monitorPipe:send(
+		     ffi.new("genericMsg",
+			     {["i1"]= flowId,
+				["d1"]= configuredRate,
+				["d2"]= actualRate,
+				["valid"]= 1234,
+				["msgType"]= monitor.typeFlowTxRateConfigured,
+				["time"]= lastPeriodic,
+				["loop"]= numLoopsSinceStart
+		  }))
+	       end
+	    end
+	 end
+	 
 	   -- echoes received packets
 	 local rx = rxQueue:tryRecv(bufs, 128)
 	 local now = dpdk.getTime()
@@ -149,33 +191,56 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	    -- handle differently at receiver and source
 	    -- receiver simply processes and echoes, FIN or not
 	    if pkt.percc1:getIsForward() == percc1.IS_FORWARD then
-	       assert(pkt.percg:getFlowId() >= 100)
+	       local flowId = pkt.percg:getFlowId()
+	       assert(flowId >= 100)
 	       --print("rx control gets pkt for flow " .. pkt.percg:getFlowId())
 	       control2Mod.percc1ProcessAndGetRate(pkt)
+	       if (pkt.percc1:getIsExit() == percc1.IS_EXIT) then
+		  local ethType = pkt.eth:getType()
+		  print("Flow " .. flowId
+			   .. " " .. readyInfo.id
+			   .. " received exit packet (marked fwd)"
+			   .. " ethType is " .. ethType .. " vs DROP "
+			   .. eth.TYPE_DROP
+			   .. " leave unchanged and echo back")		  
+		  end	       
 	    else
-	       -- TOFIX(lav): V fails
-	       assert(pkt.percg:getFlowId() >= 100)
+	       local flowId = pkt.percg:getFlowId()	       
+	       assert(flowId >= 100)
 	       -- source doesn't reply to FIN
 	       -- will set FIN for flows that ended
 	       -- will update rates otherwise
 	       if pkt.percc1:getIsExit() == percc1.IS_EXIT then -- receiver echoed fin
 		  --print("tx control gets exit pkt for flow " .. pkt.percg:getFlowId())
-		  pkt.eth:setType(eth.TYPE_DROP)		  
-		  ipc.sendMsgs(pipes, "slowPipeControlToApp",
-			       {["msg"] = ("control end flow " .. pkt.percg:getFlowId()),
-				  ["now"] = now})
-
-	       elseif queues[pkt.percg:getFlowId()] == nil then -- flow ended
+		  print("Flow " .. flowId
+			   .. " " .. readyInfo.id .. " received exit packet (marked not fwd)"
+			   .. " ethType is " .. pkt.eth:getType()
+			   .. " set to DROP " .. eth.TYPE_DROP)
+		  pkt.eth:setType(eth.TYPE_DROP)
+		  
+	       elseif queues[flowId] == nil then -- flow ended
 		  --print("tx control gets regular pkt for no-more-data flow " .. pkt.percg:getFlowId())
 		  control2Mod.percc1ProcessAndGetRate(pkt)
 		  assert(pkt.percc1:getIsForward() == percc1.IS_FORWARD)
 		  pkt.percc1:setIsExit(percc1.IS_EXIT)	      
 	       else -- flow hasn't ended yet, update rates
 		  --print("tx control gets regular pkt for have-more-data flow " .. pkt.percg:getFlowId())
-		  local rate1 = control2Mod.percc1ProcessAndGetRate(pkt)		  
+		  local rate1 = control2Mod.percc1ProcessAndGetRate(pkt)
+		  if monitorPipe ~= nil then
+		     monitorPipe:send(
+			ffi.new("genericMsg",
+				{["i1"]= flowId,
+				   ["d1"]= rate1,
+				   ["valid"]= 1234,
+				   ["msgType"]= monitor.typeGetFlowBottleneckRate,
+				   ["time"]= now,
+				   ["loop"]= numLoopsSinceStart
+		     }))
+		  end
+
 		  assert(pkt.percc1:getIsForward() == percc1.IS_FORWARD)
 		  assert(rate1 ~= nil)
-		  local queueNo = queues[pkt.percg:getFlowId()]
+		  local queueNo = queues[flowId]
 		  --print("flow was assigned queue " .. queueNo)
 		  assert(queueNo ~= nil)
 		  local rateInfo = queueRates[queueNo]
@@ -185,30 +250,54 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 		  assert(rateInfo.currentRate >= 0)
 		  if rate1 ~= rateInfo.currentRate then
 		     if rate1 < rateInfo.currentRate then
-			--print("  new rate " .. rate1 .. " is smaller than current " .. rateInfo.currentRate)
+			print("Flow " .. flowId
+				 .. "  received bottleneck rate " .. rate1
+				 .. " is smaller than current " .. rateInfo.currentRate
+				 .. " actually " .. dev:getTxQueue(queueNo):getTxRate())
 			rateInfo.currentRate = rate1
 			rateInfo.nextRate = -1
 			rateInfo.changeTime = -1
-			-- txDev:setRate ..
-			dev:getTxQueue(queueNo):setRate(rate1)
+			local dTxQueue = dev:getTxQueue(queueNo)
+			local configuredRate = rate1
+			dTxQueue:setRate(configuredRate)
+			if monitorPipe ~= nil then
+			   monitorPipe:send(
+			      ffi.new("genericMsg",
+				      {["i1"]= flowId,
+					 ["d1"]= configuredRate,
+					 ["valid"]= 1234,
+					 ["msgType"]= monitor.typeSetFlowTxRate,
+					 ["time"]= now,
+					 ["loop"]= numLoopsSinceStart
+			   }))
+			end
 		     else -- rate1 > rateInfo[0].currentRate
 			--print("  new rate " .. rate1 .. " is bigger than current " .. rateInfo.currentRate)
 			if rateInfo.nextRate == -1 then
-			   --print("     no next rate scheduled")
 			   rateInfo.nextRate = rate1
-			   rateInfo.changeTime = now + 2
+			   rateInfo.changeTime = now + 100e-6
+			   print("Flow " .. flowId
+				    .. " received bottleneck rate " .. rate1
+				    .. " is bigger than current rate." 
+				    .. " No next rate scheduled, setting next rate to " .. rate1
+				    .. ", change at " .. rateInfo.changeTime .. "s ")
 			elseif rateInfo.nextRate == rate1 then
 			   --print("     next rate is the same as new rate, do nothing")
 			elseif rateInfo.nextRate >= 0 and rate1 < rateInfo.nextRate then
-			   --print("     next rate scheduled " .. rateInfo.nextRate
-			   --	    .. " is bigger than new rate " .. rate1)
+			   print("Flow " .. flowId
+				    .. " received bottleneck rate " .. rate1
+				    .. " is bigger than current rate " 
+				    .. " and smaller than next rate " .. rateInfo.nextRate)
 			   rateInfo.nextRate = rate1
 			   -- leave changeTime as is
 			else -- rate1 > rateInfo.nextRate
-			   -- print("     next rate scheduled " .. rateInfo.nextRate
-			   --	    .. " is smaller than new rate " .. rate1)				
+			   print("Flow " .. flowId
+				    .. " received bottleneck rate " .. rate1
+				    .. " is bigger than current rate " 
+				    .. " also bigger than next rate " .. rateInfo.nextRate
+				    .. ", change at " .. now + 100e-6 .. "s ")
 			   rateInfo.nextRate = rate1
-			   rateInfo.changeTime = now + 2
+			   rateInfo.changeTime = now + 100e-6
 			   -- reset changeTime
 			end -- if rate1 < current else if etc. etc.
 		     end
@@ -243,9 +332,23 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 		  local queue = table.remove(freeQueues)
 		  assert(queue ~= nil)
 		  queues[flowId] = queue
-		  -- print("assigned queue " .. queue .. " to " .. flowId)
 		  queueRates[queue].valid = true
-		  -- print("assigned a rateInfo struct for " .. flowId)		  
+		  queueRates[queue].currentRate = 1
+		  local configuredRate = queueRates[queue].currentRate
+		  local dTxQueue = dev:getTxQueue(queue)
+		  dTxQueue:setRate(configuredRate)
+		  if monitorPipe ~= nil then
+		     monitorPipe:send(
+			ffi.new("genericMsg",
+				{["i1"]= flowId,
+				   ["d1"]= configuredRate,
+				   ["valid"]= 1234,
+				   ["msgType"]= monitor.typeSetFlowTxRate,
+				   ["time"]= now,
+				   ["loop"]= numLoopsSinceStart
+		     }))
+		  end		  
+		  -- print("assigned a rateInfo struct for " .. flowId)
 		  assert(numNew < 100) -- we only have 100 mbufs for new packets
 		  numNew = numNew + 1
 		  -- tell data thread
@@ -285,13 +388,26 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	       local flowId = msg.flow
 	       assert(flowId >= 100)
 	       local queueNo = queues[flowId]
-	       assert(queueNo ~= nil) 
+	       assert(queueNo ~= nil)
 	       queueRates[queueNo].valid = false
-	       queueRates[queueNo].currentRate = 0
+	       queueRates[queueNo].currentRate = 1
 	       queueRates[queueNo].nextRate = -1
 	       queueRates[queueNo].changeTime = -1
 	       table.insert(freeQueues, queueNo)
 	       queues[flowId] =  nil
+
+	       if monitorPipe ~= nil then
+		  monitorPipe:send(
+		     ffi.new("genericMsg",
+			     {["i1"]= flowId,
+				["d1"]= 0, -- aka deallocate
+				["valid"]= 1234,
+				["msgType"]= monitor.typeSetFlowTxRate,
+				["time"]= now,
+				["loop"]= numLoopsSinceStart
+		  }))
+	       end
+	       -- TODO(lav) : too many nows, maybe number them
 	       ipc.sendFcaFinMsg(pipes, msg.flow, msg.endTime)
 	       -- print("deallocated queue " .. queueNo .. " for flow " .. flowId)
 	    end
@@ -302,14 +418,29 @@ function control2Mod.controlSlave(dev, pipes, readyInfo)
 	 for flowId, queueNo in pairs(queues) do
 	    assert(queueRates[queueNo].valid)
 	    if queueRates[queueNo].changeTime ~= -1 and queueRates[queueNo].changeTime <= now then
-	       --print("change rates for queue " .. queueNo
-	        --	.. " from " .. queueRates[queueNo].currentRate
-		--	.. " to " .. queueRates[queueNo].nextRate)
+	       print("change rates for flow " .. flowId .. ", queue " .. queueNo
+	        	.. " from " .. queueRates[queueNo].currentRate
+			.. " to " .. queueRates[queueNo].nextRate)
 	       queueRates[queueNo].currentRate = queueRates[queueNo].nextRate
 	       queueRates[queueNo].nextRate = -1
 	       queueRates[queueNo].changeTime = -1
+
+	       local configuredRate = queueRates[queueNo].currentRate
 	       local dTxQueue = dev:getTxQueue(queueNo)
-	       dTxQueue:setRate(queueRates[queueNo].currentRate)
+	       dTxQueue:setRate(configuredRate)
+
+	       if monitorPipe ~= nil then
+		  monitorPipe:send(
+		     ffi.new("genericMsg",
+			     {["i1"]= flowId,
+				["d1"]= configuredRate,
+				["valid"]= 1234,
+				["msgType"]= monitor.typeSetFlowTxRate,
+				["time"]= now,
+				["loop"]= numLoopsSinceStart
+		  }))
+	       end
+
 	    end -- if rateInfo[0].changeTime ~= nil ..
 	 end -- for queueNo, ..
 

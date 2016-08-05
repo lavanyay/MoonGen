@@ -19,7 +19,7 @@ data1Mod = {}
 function data1Mod.dataSlave(dev, pipes, readyInfo)
    print("starting dataSlave on " .. dpdk.getCore())
 	-- one counter for total data throughput
-	--local ctr = stats:newDevTxCounter(dev, "plain")
+
 	ipc.waitTillReady(readyInfo)
 
 	local mem = memory.createMemPool(function(buf)
@@ -42,7 +42,8 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	local queues = {}
 	local txBufs = mem:bufArray(128)
 	local txBufsFinAck = mem:bufArray(128)
-	local txCtr = stats:newDevTxCounter(dev, "plain")
+	local txCtr = stats:newDevTxCounter(dev, "plain", ("tx_throughput-log-data-".. dev.id .. ".txt"))
+	--local txCtr = stats:newDevTxCounter(dev, "plain")
 	
 	-- state for rx
 	-- numPacketsReceived[flow]
@@ -54,7 +55,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	local rxQueue = dev:getRxQueue(perc_constants.DATA_RXQUEUE)
 	local rxQueueFinAck = dev:getRxQueue(perc_constants.FINACK_QUEUE)
 	local txQueueFinAck = dev:getTxQueue(perc_constants.FINACK_QUEUE)
-	local rxCtr = stats:newDevRxCounter(dev, "plain")
+	--local rxCtr = stats:newDevRxCounter(dev, "plain")
 
 	local i = 0
 	while dpdk.running() do	   
@@ -77,6 +78,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	   -- SENDING DATA PACKETS
 	   for flow, queueNo in pairs(queues) do
 	      local numLeft = numPacketsLeft[flow]
+	      print("Flow " .. flow .. " has " .. numLeft .. " left to send.\n")
 	      assert(numLeft >= 0)	      
 	      local queue = dev:getTxQueue(queueNo)		 
 	      local numToSend = 128
@@ -85,15 +87,24 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	      for i=1,numToSend do		 
 		 local pkt = txBufs[i]:getUdpPacket()
 		 pkt.udp:setSrcPort(tonumber(flow))
+		 if (numLeft == i) then
+		    print("Flow " .. flow ..
+			     " sending packet i (" .. i .. ") "
+			     .. " and numLeft (".. numLeft .. ").\n")
+		 end
 		 pkt.udp:setDstPort(numLeft-i)
-		 -- number of packets left, 0 for last packet
+		 local customChecksum = checksum(pkt.udp,6)
+		 pkt.udp:setChecksum(customChecksum)
+		 -- actually this is an estimated numLeft
+		 -- but if receiver gets this it gets all previous too
+		 -- so accurate estimate??
 		 pkt.eth.src:set(queueNo)
 	      end
-	      txBufs:offloadUdpChecksums()
+	      --txBufs:offloadUdpChecksums()
 	      local numSent = queue:trySendN(txBufs, numToSend)
 	      numLeft = numLeft - numSent
-	      --print("Sent " .. numSent .. " data packets of flow " .. flow
-	      -- 	       .. ", " .. numLeft .. " to go")
+	      print("Sent " .. numSent .. " data packets of flow " .. flow
+	       	       .. ", " .. numLeft .. " to go")
 	      assert(numLeft >= 0)	      
 	      numPacketsLeft[flow] = numLeft
 	      if (numLeft == 0) then
@@ -104,7 +115,6 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	      end	      
 	   end -- ends for flow, queueNo in queues
 	   -- also need to send FIN-ACKs for received packets
-	   --txCtr:update()
 	   
 	   -- RECEIVE DATA PACKETS
 	   local rx = rxQueue:tryRecv(rxBufs, 128)
@@ -114,18 +124,25 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	   for i = 1, rx do
 	      local buf = rxBufs[i]
 	      local pkt = buf:getUdpPacket()
+	      local customChecksum = checksum(pkt.udp, 6)
 	      local flowId = pkt.udp:getSrcPort()
 	      local left = pkt.udp:getDstPort()
-	      if numPacketsReceived[flowId] == nil then	
-		 numPacketsReceived[flowId] = 0
-	      end
-	      numPacketsReceived[flowId] = numPacketsReceived[flowId] + 1
-	      if left == 0 then
-		 local now = dpdk.getTime()
-		 --print("Rx " .. numPacketsReceived[flowId]
-		 -- 	  .. " packets of flow " .. flowId)
-		 finAckPending[flowId] = numPacketsReceived[flowId]
-		 numFinAcks = numFinAcks + 1
+	      if (customChecksum == pkt.udp:getChecksum()) then
+		 if numPacketsReceived[flowId] == nil then	
+		    numPacketsReceived[flowId] = 0
+		 end
+		 numPacketsReceived[flowId] = numPacketsReceived[flowId] + 1
+		 if left == 0 then
+		    local now = dpdk.getTime()
+		    print("Received packet with dstport = 0 for flow "
+			     .. flowId .. " so far received "
+			     .. numPacketsReceived[flowId]
+			     .. " packets of flow.")
+		    assert(finAckPending[flowId] == nil)
+		    finAckPending[flowId] = numPacketsReceived[flowId]
+		    numFinAcks = numFinAcks + 1
+		 end		 
+	      else print("Received corrupted UDP message.\n")
 	      end
 	   end
 	   rxBufs:freeAll()	
@@ -142,9 +159,12 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 		 pkt.udp:setSrcPort(flowId)
 		 pkt.udp:setDstPort(numPkts)
 		 pkt.eth:setType(eth.TYPE_FINACK) -- filter into separate queue
+		 print("data " .. readyInfo.id .. " sending FIN-ACK for " .. flowId)
 		 bufNo = bufNo + 1
 	      end
 	      local numSent = txQueueFinAck:sendN(txBufsFinAck, numFinAcks)
+	      print("data " .. readyInfo.id .. " sent " .. numSent .. " of "
+		       .. numFinAcks .. " pending FinAcks.")
 	   end
 
 	   -- RECEIVE FIN-ACKS
@@ -156,13 +176,16 @@ function data1Mod.dataSlave(dev, pipes, readyInfo)
 	      local pkt = buf:getUdpPacket()
 	      local flowId = pkt.udp:getSrcPort()
 	      local received = pkt.udp:getDstPort()
+	      print("data " .. readyInfo.id .. " got FIN-ACK for " .. flowId)
 	      ipc.sendFdcFinAckMsg(pipes, flowId, received, now)
 	   end
 	   rxBufs:freeAll()
+
+	   txCtr:update()
 	   i = i + 1
 	end -- ends while dpdk.running()
 	txCtr:finalize()
-	rxCtr:finalize()
+	--rxCtr:finalize()
 end
 
 return data1Mod

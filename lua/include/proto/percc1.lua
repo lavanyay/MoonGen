@@ -47,8 +47,8 @@ percc1.IS_FORWARD = 0x1
 
 -- newRate and oldRate field value for Control
 -- granularity in KBPS 
-percc1.RATE_INFINITE = 2000000000
-percc1.RATE_TEN_GBPS = 10 * 1e6
+percc1.RATE_INFINITE = 5000 --2000000000
+percc1.RATE_TEN_GBPS = 5000
 
 -----------------------------------------------------------------------------------
 ---- PERC Per-Hop array structs 

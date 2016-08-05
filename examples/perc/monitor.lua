@@ -11,8 +11,10 @@ monitorMod = {
    ["typeDataTxQueueB"]=5,
    ["typeDataRxQueueB"]=6,
    ["typeAppActiveFlowsNum"]=7,
-   ["typeControlRate"]=8,
-   ["typeDataRate"]=9
+   ["typeSetFlowTxRate"]=8,
+   ["typeGetFlowBottleneckRate"]=9,
+   ["typeFlowTxRateConfigured"]=10,
+   ["typeControlDpdkLoopStartTime"]=11,
 }
 
 
@@ -36,6 +38,7 @@ typedef struct {
  double d1, d2; 
  int i1, i2; 
  double time;
+ int loop;
  int valid, msgType;
 } genericMsg;
 typedef genericMsg* pGenericMsg;
@@ -77,30 +80,68 @@ function  monitorMod.monitorSlave(pipes, readyInfo)
 
    local logFiles = {}
    for pipeName, pipe in pairs(pipes) do
-      logFiles[pipeName] = io.open(pipeName.. "-log.txt", "a")
+      logFiles[pipeName] = io.open(pipeName.. "-log.txt", "w")
    end
+   
    while dpdk.running() do
+      --local pipeName = "control-0"
+      --local logFile = logFiles[pipeName]
       for pipeName, logFile in pairs(logFiles) do
 	 msgs = monitorMod.acceptMsgs(pipes, pipeName, 10)
 	 if (msgs ~= nil) then
 	    for msgNo, msg in pairs(msgs) do
 	       local line = monitorMod.format(msg)
-	       print("writing " .. line .. " to file for " .. pipeName)
-	       logFile:write(line)
-	       end
+	       --print("writing " .. line .. " to file for " .. pipeName)
+	       if line == nil then print("unrecognized msg of type " .. msg.msgType .. " on " .. pipeName)
+	       else logFile:write(line) end
 	    end
+	    --end
+	 end
       end
    end
 end
 
 function monitorMod.format(msg)
    local msg = ffi.cast("pGenericMsg", msg)
+   -- TODO(lav): array of handlers instead of if else ..
    if msg.msgType == monitorMod.typeDataTxMbps then
       return ("tx_throughput_mbps " .. msg.d1 .. "\n")
    elseif msg.msgType == monitorMod.typeAppActiveFlowsNum then
-      return("app_active_flows_num " .. msg.i1 .. "\n")
-   else
-      return ("unrecognized msg\n")
+      return("app_active_flows time_num "
+		.. msg.time
+		.. " " .. msg.i1
+		.. "\n")
+   elseif msg.msgType == monitorMod.typeFlowTxRateConfigured then
+      return("flow_tx_rate_configured "
+		.. "loop_time_flow_configured_actual "
+		.. msg.loop
+		.. " " .. msg.time 
+		.. " " .. msg.i1
+		.. " " .. msg.d1
+		.. " " .. msg.d2
+		.. "\n")
+   elseif msg.msgType == monitorMod.typeSetFlowTxRate then 
+      return("set_flow_tx_rate "
+		.. "loop_time_flow_rate "
+		.. msg.loop
+		.. " " .. msg.time
+		.. " " .. msg.i1
+		.. " " .. msg.d1 .. "\n")
+   elseif msg.msgType == monitorMod.typeGetFlowBottleneckRate then      
+      return("get_flow_bottleneck_rate "
+		.. "loop_time_flow_rate "
+		.. msg.loop
+		.. " " .. msg.time
+		.. " " .. msg.i1
+		.. " " .. msg.d1 .. "\n")
+   elseif msg.msgType == monitorMod.typeControlDpdkLoopStartTime then      
+      return("control_dpdk_loop_start_time "
+		.. "time_num "
+		..  msg.time
+		.. " " .. msg.i1
+		.. "\n")
+   else      
+      return nil
    end
 end
    

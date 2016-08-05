@@ -54,6 +54,7 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
    while dpdk.running() do
       local msgs = ipc.fastAcceptMsgs(pipes, "fastPipeControlToAppFinAck", "pFcaFinAckMsg", 20)
       if next(msgs) ~= nil then
+	 local now = dpdk.getTime()
 	 for msgNo, msg in pairs(msgs) do
 	    if (activeFlows[msg.flow] ~= nil) then
 	       local fct = msg.endTime - activeFlows[msg.flow]
@@ -63,7 +64,7 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 			.. msg.size .. " of " .. flowSize[msg.flow]
 			.. " packets.")
 	       activeFlows[msg.flow] = nil
-	       flowSize[msg.flow] = nil
+	       --flowSize[msg.flow] = nil
 	       numActiveFlows = numActiveFlows - 1
 	       assert(monitorPipe ~= nil)
 	       print("sending msg of typeAppActiveFlowsNum")
@@ -71,18 +72,23 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 		  ffi.new("genericMsg",
 			  {["i1"]= numActiveFlows,
 			     ["valid"]= 1234,
-			     ["msgType"]= monitor.typeAppActiveFlowsNum}))
+			     ["msgType"]= monitor.typeAppActiveFlowsNum,
+			     ["time"] = now
+	       }))
 			     
 	    elseif (hopelessFlows[msg.flow] ~= nil) then
 	       local fct = msg.endTime - hopelessFlows[msg.flow].startTime
 	       local minFct = msg.size * (1.2e-6) 
-	       print("Flow " .. msg.flow .. " finished (FIN-ACK) in " .. fct
+	       print("Hopeless flow " .. msg.flow .. " finished (FIN-ACK) in " .. fct
 			.. "s (min : " .. minFct .. "s) , received "
-			.. msg.size .. " of " .. hopelessFlows[msg.flow].flowSize
+			.. msg.size .. " of " .. hopelessFlows[msg.flow].size
 			.. " packets.")
-
 	    else
-	       print("Don't know what to do with FinAck for flow " .. msg.flow)
+	       print("Flow " .. msg.flow .. " finished again (FIN-ACK)"
+			.. " received "
+			.. msg.size .. " of " .. flowSize[msg.flow]
+			.. " packets.")
+	       print("(Don't know what to do with FinAck for flow " .. msg.flow .. ")")
 	    end
 	 end
       end
@@ -107,6 +113,15 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 	 activeFlows[newFlowId] = sendTime
 	 flowSize[newFlowId] = numPackets
 	 numActiveFlows = numActiveFlows + 1
+	 if monitorPipe ~= nil then
+	    monitorPipe:send(
+	       ffi.new("genericMsg",
+		       {["i1"]= numActiveFlows,
+			  ["valid"]= 1234,
+			  ["msgType"]= monitor.typeAppActiveFlowsNum,
+			  ["time"] = now
+	    }))
+	 end
 	 nextSendTime = sendTime + poissonDelay(MEAN_INTER_ARRIVAL_TIME)
 	 local tries = 0
 	 while (nextSendTime - sendTime > 5) do
