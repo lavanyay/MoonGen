@@ -8,6 +8,8 @@ local percg = require "proto.percg"
 local percc1 = require "proto.percc1"
 local eth = require "proto.ethernet"
 local pcap = require "pcap"
+local monitor = require "examples.perc.monitor"
+local ipc = require "examples.perc.ipc"
 
 local Link = {sumSat = 0, numSat = 0, numUnsat = 0, linkCapacity = percc1.RATE_TEN_GBPS}
 
