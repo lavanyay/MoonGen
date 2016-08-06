@@ -131,10 +131,10 @@ function mod.createMemPool(...)
 	if args.func then
 		local bufs = {}
 		for i = 1, args.n do
-			-- TODO: make this dependent on bufSize
-			local buf = mem:alloc(1522)
-			args.func(buf)
-			bufs[#bufs + 1] = buf
+		   -- TODO: make this dependent on bufSize
+		   local buf = mem:alloc(args.bufSize)
+		   args.func(buf)
+		   bufs[#bufs + 1] = buf
 		end
 		for i, v in ipairs(bufs) do
 			dpdkc.rte_pktmbuf_free_export(v)
@@ -321,7 +321,13 @@ end
 --- Allocates as many buffers as this array is large
 --- @param size	Size of every buffer
 function bufArray:alloc(size)
-	dpdkc.alloc_mbufs(self.mem, self.array, self.size, size)
+   -- array is an array of pointes to membufs
+   -- mem is the memory pool returned by dpdkc.init_mem
+   -- all these buffers were initialized by MoonGen then
+   -- freed (and contents still there)
+   -- So when you alloc, you get a freed buffer with
+   -- the buf contents just before the free still there
+   dpdkc.alloc_mbufs(self.mem, self.array, self.size, size)
 end
 
 --- Allocates buffers from the memory pool and fills the array.
