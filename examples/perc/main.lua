@@ -66,7 +66,7 @@ function master(...)
 	 rxDev:l2Filter(eth.TYPE_ACK, perc_constants.ACK_QUEUE)
 	 rxDev:l2Filter(eth.TYPE_DROP, perc_constants.DROP_QUEUE)
 
-	 numLinksUp = device.waitForLinks()
+	 local numLinksUp = device.waitForLinks()
 
 	 print("waiting for links")
 	 if (numLinksUp == 2) then 

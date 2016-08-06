@@ -97,7 +97,7 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 		     .. fct .. "s (min : " .. minFct .. "s) "
 		     .. "( " .. lastCommitNumber .. " / "
 			.. size .. " )")
-	    assert(lastCommitNumber < size)
+	    assert(lastCommitNumber <= size)
 	    local lossRate = (100*(size-lastCommitNumber))/size
 	    
 	    monitorPipe:send(

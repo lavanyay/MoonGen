@@ -134,7 +134,7 @@ function ip4Header:setVersion(int)
 	int = int or 4
 	int = band(lshift(int, 4), 0xf0) -- fill to 8 bits
 	
-	old = self.verihl
+	local old = self.verihl
 	old = band(old, 0x0f) -- remove old value
 	
 	self.verihl = bor(old, int)
@@ -158,7 +158,7 @@ function ip4Header:setHeaderLength(int)
 	int = int or 5
 	int = band(int, 0x0f)	
 	
-	old = self.verihl
+	local old = self.verihl
 	old = band(old, 0xf0)
 	
 	self.verihl = bor(old, int)
@@ -240,7 +240,7 @@ function ip4Header:setFlags(int)
 	int = int or 0
 	int = band(lshift(int, 13), 0xe000) -- fill to 16 bits
 	
-	old = hton16(self.frag)
+	local old = hton16(self.frag)
 	old = band(old, 0x1fff) -- remove old value
 	
 	self.frag = hton16(bor(old, int))
@@ -266,7 +266,7 @@ function ip4Header:setFragment(int)
 	int = int or 0 
 	int = band(int, 0x1fff)
 
-	old = hton16(self.frag)
+	local old = hton16(self.frag)
 	old = band(old, 0xe000)
 	
 	self.frag = hton16(bor(old, int))
