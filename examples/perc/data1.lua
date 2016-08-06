@@ -13,21 +13,26 @@ local pcap = require "pcap"
 local ipc = require "examples.perc.ipc"
 local monitor = require "examples.perc.monitor"
 local perc_constants = require "examples.perc.constants"
-local PKT_SIZE	= 1500
-local ACK_SIZE = 128
+local DATA_PACKET_SIZE	= perc_constants.DATA_PACKET_SIZE -- includes payload
+local ACK_PACKET_SIZE = perc_constants.ACK_PACKET_SIZE
 
 data1Mod = {}
 
+function data1Mod.log(str)
+   if perc_constants.LOG_DATA then
+      print(str)
+   end
+end
 
 function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
-   print("starting dataSlave on " .. dpdk.getCore())
+   data1Mod.log("starting dataSlave on " .. dpdk.getCore())
 	-- one counter for total data throughput
 
 	ipc.waitTillReady(readyInfo)
 
 	local mem = memory.createMemPool(function(buf)
 		buf:getUdpPacket():fill{
-			pktLength = PKT_SIZE,
+			pktLength = DATA_PACKET_SIZE,
 			ethSrc = 0,
 			ethDst = "10:11:12:13:14:15", -- ready info id??
 			ip4Dst = "192.168.1.1",
@@ -38,7 +43,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 
 	local ackMem = memory.createMemPool(function(buf)
 		buf:getUdpPacket():fill{
-			pktLength = ACK_SIZE,
+			pktLength = ACK_PACKET_SIZE,
 			ethSrc = perc_constants.ACK_QUEUE,
 			ethDst = "10:11:12:13:14:15", -- ready info id??
 			ip4Dst = "192.168.1.1",
@@ -87,7 +92,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	   do -- NEW FLOWS TO SEND
 	      local msgs = ipc.acceptFcdStartMsgs(pipes)
 	      if next(msgs) ~= nil then
-		 -- print("dataSlave: accepted FcdStartMsgs")
+		 -- data1Mod.log("dataSlave: accepted FcdStartMsgs")
 		 for msgNo, msg in pairs(msgs) do
 		    assert(msg.flow >= 100)
 		    assert(numPacketsLeft[msg.flow] == nil)
@@ -98,7 +103,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		    numPacketsAcked[msg.flow] = 0
 		    numPacketsCommitted[msg.flow] = 0
 		    queues[msg.flow] = msg.queue
-		    -- print("dataSlave: new flow " .. msg.flow .. " of size " .. msg.size .. " on queue " .. msg.queue)
+		    -- data1Mod.log("dataSlave: new flow " .. msg.flow .. " of size " .. msg.size .. " on queue " .. msg.queue)
 		 end		
 	      end -- ends if next(msgs)..
 	   end
@@ -107,12 +112,12 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	      for flow, queueNo in pairs(queues) do
 		 local numLeft = numPacketsLeft[flow]
 		 local numSent = numPacketsSent[flow]
-		 --print("Flow " .. flow .. " has " .. numLeft .. " left to send.\n")
+		 --data1Mod.log("Flow " .. flow .. " has " .. numLeft .. " left to send.\n")
 		 assert(numLeft >= 0)	      
-		 local queue = dev:getTxQueue(queueNo)		 
+
 		 local numToSend = 128
 		 if numLeft < 128 then numToSend = numLeft end
-		 txBufs:allocN(PKT_SIZE, numToSend)
+		 txBufs:allocN(DATA_PACKET_SIZE, numToSend)
 		 for i=1,numToSend do		 
 		    local pkt = txBufs[i]:getUdpPacket()
 		    assert(pkt.eth:getType() == eth.TYPE_IP)
@@ -122,8 +127,9 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		    pkt.payload.uint16[0]= flow
 		    pkt.payload.uint16[1]= numSent+i
 		    pkt.payload.uint16[2]= math.random(0, 2^16 - 1)
-		    local customChecksum = checksum(pkt.payload,6)
-		    -- print("\nChecksum for transmitted packet (got "
+		    pkt.payload.uint16[3]= dpdkLoopCounter
+		    local customChecksum = checksum(pkt.payload,8)
+		    -- data1Mod.log("\nChecksum for transmitted packet (got "
 		    --  	     .. customChecksum .. ")\n")
 
 		    pkt.udp:setChecksum(customChecksum)
@@ -132,9 +138,10 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		 -- TODO(lav): BUG where packet with same seqNum
 		 --  received multiple times
 		 --txBufs:offloadUdpChecksums()
-		 local numSentNow = queue:trySendN(txBufs, numToSend)
+		 assert(txBufs.size == numToSend)
+		 local numSentNow = dev:getTxQueue(queueNo):send(txBufs)
 		 numLeft = numLeft - numSentNow
-		 --print("Sent " .. numSentNow .. " data packets of flow " .. flow
+		 --data1Mod.log("Sent " .. numSentNow .. " data packets of flow " .. flow
 		 --	  .. ", " .. numLeft .. " to go")
 		 assert(numLeft >= 0)	      
 		 numPacketsLeft[flow] = numLeft
@@ -157,24 +164,33 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	      do -- RECEIVE DATA PACKETS
 		 local now = dpdk.getTime()
 		 local rx = rxQueue:tryRecv(rxBufs, 128)
-		 --if (rx > 0) then print("Received " .. rx .. " data packets") end
+		 --if (rx > 0) then data1Mod.log("Received " .. rx .. " data packets") end
 		 for i = 1, rx do
 		    local buf = rxBufs[i]
 		    local pkt = buf:getUdpPacket()
 		    assert(pkt.eth:getType() == eth.TYPE_IP)
 		    local receivedChecksum = pkt.udp:getChecksum()
-		    local customChecksum = checksum(pkt.payload, 6)
-		    -- print("\nChecksum for received packet (got "
+		    local customChecksum = checksum(pkt.payload, 8)
+		    -- data1Mod.log("\nChecksum for received packet (got "
 		    --  	     .. receivedChecksum .. " and calculated "
 		    --  	     .. customChecksum .. ")\n")
 		    local flowId = pkt.udp:getSrcPort()
 		    local seqNum = pkt.udp:getDstPort()
 		    --local left = pkt.udp:getDstPort() --not used anywhere
 		    if (customChecksum == receivedChecksum) then	
-		       -- print("Received original data packet on rxQueue at " .. readyInfo.id)
+		       -- TODO(lav): hack to make sure this isn't re-used
+		       pkt.udp:setChecksum(0) 
 		       if numPacketsReceived[flowId] == nil then	
-			  numPacketsReceived[flowId] = 0			  
+			  numPacketsReceived[flowId] = 0
 		       end
+
+		       data1Mod.log("Received flowId: "
+				.. flowId
+				.. " seqNum " .. seqNum
+				.. " random " .. pkt.payload.uint16[2]
+				.. " queueNo " .. pkt.payload.uint16[3]
+				.. " checksum " .. customChecksum			     
+				.. " numPacketsReceived " .. numPacketsReceived[flowId])
 
 		       if (maxSeqReceived[flowId] == nil
 			   or seqNum > maxSeqReceived[flowId]) then
@@ -203,7 +219,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 					   ["time"]= now }))
 			  end
 		       end
-		       --print("Received corrupted UDP message.\n")
+		       --data1Mod.log("Received corrupted UDP message.\n")
 		    end
 		 end
 		 rxBufs:freeAll()	
@@ -213,7 +229,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	      do -- SEND ACKS
 		 if numAcks > 0 then
 		    -- SEND ACKS, received on a different queue
-		    txBufsAck:allocN(ACK_SIZE, numAcks)
+		    txBufsAck:allocN(ACK_PACKET_SIZE, numAcks)
 		    local bufNo = 1
 		    for flowId, xx in pairs(ackPending) do
 		       local numPackets = numPacketsReceived[flowId] 
@@ -225,21 +241,22 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		       local customChecksum = checksum(pkt.udp,6)
 		       pkt.udp:setChecksum(customChecksum)
 		       pkt.eth.src:set(perc_constants.ACK_QUEUE)
-		       --print("data " .. readyInfo.id .. " sending ACK for " .. flowId)
+		       --data1Mod.log("data " .. readyInfo.id .. " sending ACK for " .. flowId)
 		       bufNo = bufNo + 1
 		    end
+		    assert(bufNo == numAcks+1)
 		    local numSent = txQueueAck:sendN(txBufsAck, numAcks)
-		    --print("data " .. readyInfo.id .. " sent " .. numSent .. " of "
+		    --data1Mod.log("data " .. readyInfo.id .. " sent " .. numSent .. " of "
 		    --	       .. numAcks .. " pending Acks.")
 		 end
 	      end
 	   end -- RECEIVE DATA AND SEND ACKS
 	   
 	   do -- RECEIVE ACKS
-	      --rxBufsAck:alloc(PKT_SIZE)
 	      -- this is where we update packetsAcked
 	      -- notifying app for every 10% of total packets
 	      local now = dpdk.getTime()
+	      -- wait for 128us??
 	      local rx = rxQueueAck:tryRecv(rxBufsAck, 128)
 	      for i = 1, rx do	      
 		 local buf = rxBufsAck[i]
@@ -259,12 +276,12 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 			   or acked > 0.9 * total) then 
 			  ipc.sendFdcFinAckMsg(pipes, flowId, acked, now)
 			  numPacketsCommitted[flowId] = acked
-			  print("data " .. readyInfo.id .. " got ACK ( "
+			  data1Mod.log("data " .. readyInfo.id .. " got ACK ( "
 				   .. acked
 				   .. " / " .. total
-				.. " ) for " .. flowId)
+				.. " ) for " .. flowId)			  
 		       end
-		       --print("data " .. readyInfo.id .. " got ACK for " .. flowId)
+		       --data1Mod.log("data " .. readyInfo.id .. " got ACK for " .. flowId)
 		    end
 		 end
 	      end
