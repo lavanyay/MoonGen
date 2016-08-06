@@ -177,8 +177,8 @@ function ipcMod.fastAcceptMsgs(pipes, pipeName, msgType, waitxTenUs)
 	    --	     .. " on pipe " .. pipeName)
 	    numMsgs = numMsgs + 1
 	 else
-	    print("Got invalid msg" ..
-		  " for flow " .. tostring(msg.flow)
+	    print("Got invalid msg with valid = " ..
+		     msg.valid
 		     .. " on pipe " .. pipeName)
 	    
 	 end

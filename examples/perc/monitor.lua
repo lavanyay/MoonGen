@@ -15,6 +15,8 @@ monitorMod = {
    ["typeGetFlowBottleneckRate"]=9,
    ["typeFlowTxRateConfigured"]=10,
    ["typeControlDpdkLoopStartTime"]=11,
+   ["typeCorruptedDataPkts"]=12,
+   ["typeFlowFctLoss"]=13,
 }
 
 
@@ -139,6 +141,22 @@ function monitorMod.format(msg)
 		.. "time_num "
 		..  msg.time
 		.. " " .. msg.i1
+		.. "\n")
+   elseif msg.msgType == monitorMod.typeCorruptedDataPkts then      
+      return("corrupted_data_pkts "
+		.. "time_num "
+		..  msg.time
+		.. " " .. msg.i1
+		.. "\n")
+   elseif msg.msgType == monitorMod.typeFlowFctLoss then      
+      return("flow_fct_loss "
+		.. "time_flow_fct_fct_loss_total "
+		..  msg.time
+		.." " .. msg.i1	     
+		.. " " .. msg.d1
+		.. "us " .. msg.d2
+		.. "us " .. msg.i2
+		.. "% " .. msg.loop
 		.. "\n")
    else      
       return nil

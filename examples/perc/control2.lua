@@ -116,7 +116,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
       -- all but tx 1 for data
       for i=0, 127 do
 	 if (127-i) ~= perc_constants.CONTROL_QUEUE
-	    and (127-i) ~= perc_constants.FINACK_QUEUE
+	    and (127-i) ~= perc_constants.ACK_QUEUE
 	 and (127-i) ~= perc_constants.DROP_QUEUE then 
 	    table.insert(freeQueues, 127-i)
 	 end

@@ -36,9 +36,9 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
    ipc.waitTillReady(readyInfo)
    local lastSentTime = dpdk.getTime()
    local newFlowId = 100
-   local active = {} -- app has started but not ended yet
+   local active = {} -- app has started but not definitively ended yet
    --local workload = {1, -1, 1, 1, 1, -1, 1, -1}
-   local numActiveFlows = 0
+
 
 
    -- if lastFlowStarted is in active flows,
@@ -47,63 +47,87 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
    
    local now = 0
    local nextSendTime = now --+ poissonDelay(MEAN_INTER_ARRIVAL_TIME)
-   local activeFlows = {}
-   local flowSize = {} -- of active flows
 
-   local hopelessFlows = {}
+   -- active flows is flows that have seen action in the last ACTIVE seconds
+   -- we'll print out the FCT when a flow is GC-ed from active flows
+   local numActiveFlows = 0
+   local activeFlows = {}
+
+   -- flowSize, startTime, committedPackets maintained for all flows (or all active flows?)
+   -- TODO(lav): what to do about flowIds being re-used??
+   local flowStartTime = {}
+   local flowSize = {} -- of all flows
+   local committedPacketsTime= {}
+   local committedPacketsNumber= {}
+   local lastActionTime = {} -- of all active flows
+   
    while dpdk.running() do
+
+      -- Get acks from PERC and update committed packets for all flows
       local msgs = ipc.fastAcceptMsgs(pipes, "fastPipeControlToAppFinAck", "pFcaFinAckMsg", 20)
       if next(msgs) ~= nil then
 	 local now = dpdk.getTime()
 	 for msgNo, msg in pairs(msgs) do
-	    if (activeFlows[msg.flow] ~= nil) then
-	       local fct = msg.endTime - activeFlows[msg.flow]
-	       local minFct = msg.size * (1.2e-6) 
-	       print("Flow " .. msg.flow .. " finished (FIN-ACK) in " .. fct
-			.. "s (min : " .. minFct .. "s) , received "
-			.. msg.size .. " of " .. flowSize[msg.flow]
-			.. " packets.")
-	       activeFlows[msg.flow] = nil
-	       --flowSize[msg.flow] = nil
-	       numActiveFlows = numActiveFlows - 1
-	       assert(monitorPipe ~= nil)
-	       print("sending msg of typeAppActiveFlowsNum")
-	       monitorPipe:send(
-		  ffi.new("genericMsg",
-			  {["i1"]= numActiveFlows,
-			     ["valid"]= 1234,
-			     ["msgType"]= monitor.typeAppActiveFlowsNum,
-			     ["time"] = now
-	       }))
-			     
-	    elseif (hopelessFlows[msg.flow] ~= nil) then
-	       local fct = msg.endTime - hopelessFlows[msg.flow].startTime
-	       local minFct = msg.size * (1.2e-6) 
-	       print("Hopeless flow " .. msg.flow .. " finished (FIN-ACK) in " .. fct
-			.. "s (min : " .. minFct .. "s) , received "
-			.. msg.size .. " of " .. hopelessFlows[msg.flow].size
-			.. " packets.")
-	    else
-	       print("Flow " .. msg.flow .. " finished again (FIN-ACK)"
-			.. " received "
-			.. msg.size .. " of " .. flowSize[msg.flow]
-			.. " packets.")
-	       print("(Don't know what to do with FinAck for flow " .. msg.flow .. ")")
+	    if flowSize[msg.flow] ~= nil then	       
+	       local committedNumber = committedPacketsNumber[msg.flow]
+	       if msg.size > committedNumber then
+		  assert(msg.endTime > committedPacketsTime[msg.flow])
+		  committedPacketsNumber[msg.flow] = msg.size
+		  committedPacketsTime[msg.flow] = msg.endTime
+		  lastActionTime[msg.flow] = msg.endTime
+	       end	    
 	    end
 	 end
       end
 
-      local gcnow = dpdk.getTime()
-      for flow, startTime in pairs(activeFlows) do
-	 if (gcnow - startTime > 5) then
-	    print("Flow " .. flow .. " is taking > 5s since start. Remove.")
-	    hopelessFlows[flow] = {["startTime"] = activeFlows[flow], ["size"] = flowSize[flow]}
-	    activeFlows[flow] = nil
-	    flowSize[flow] = nil	    
+      -- Print FCT stats for stale flows and remove them from active list
+      now = dpdk.getTime()
+      for flowId, xx in pairs(activeFlows) do	 
+	 -- TODO(lav): Flows with many packets could take a while
+	 --  to hear back about 10% of the packets ..
+	 if (now - lastActionTime[flowId] > 2) then
+	    local lastCommitTime = committedPacketsTime[flowId]
+	    local lastCommitNumber = committedPacketsNumber[flowId]
+	    local startTime = flowStartTime[flowId]
+	    local size = flowSize[flowId]
+	    
+	    local fct = lastCommitTime - startTime
+	    local minFct = lastCommitNumber * (1.2e-6) 
+	    print("Flow " .. flowId .. " kinda finished in "
+		     .. fct .. "s (min : " .. minFct .. "s) "
+		     .. "( " .. lastCommitNumber .. " / "
+			.. size .. " )")
+	    assert(lastCommitNumber < size)
+	    local lossRate = (100*(size-lastCommitNumber))/size
+	    
+	    monitorPipe:send(
+	       ffi.new("genericMsg",
+		       {["i1"]= flowId,
+			  ["d1"]= fct*1e6,
+			  ["d2"]= minFct*1e6,
+			  ["i2"]= lossRate,
+			  ["loop"]= size,
+			  ["valid"]= 1234,
+			  ["msgType"]= monitor.typeFlowFctLoss,
+			  ["time"] = now
+	    }))	       
+
+	    activeFlows[flowId] = nil
 	    numActiveFlows = numActiveFlows - 1
+	    
+	    assert(monitorPipe ~= nil)
+	    print("sending msg of typeAppActiveFlowsNum")
+	    monitorPipe:send(
+	       ffi.new("genericMsg",
+		       {["i1"]= numActiveFlows,
+			  ["valid"]= 1234,
+			  ["msgType"]= monitor.typeAppActiveFlowsNum,
+			  ["time"] = now
+	    }))	       
 	 end
       end
-      
+
+      -- Start new flows if it's time
       now = dpdk.getTime()
       if now > nextSendTime and numActiveFlows < 7 then
 	 local size = getSize()
@@ -111,8 +135,14 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 	 local sendTime = now
 	 app2Mod.startNewFlow(newFlowId, numPackets, active, pipes, sendTime)
 	 activeFlows[newFlowId] = sendTime
-	 flowSize[newFlowId] = numPackets
 	 numActiveFlows = numActiveFlows + 1
+
+	 flowStartTime[newFlowId] = sendTime
+	 flowSize[newFlowId] = numPackets
+	 committedPacketsNumber[newFlowId] = 0
+	 committedPacketsTime[newFlowId] = 0
+	 lastActionTime[newFlowId] = sendTime
+	 
 	 if monitorPipe ~= nil then
 	    monitorPipe:send(
 	       ffi.new("genericMsg",
@@ -137,6 +167,7 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 
 	 newFlowId = newFlowId+1
 	 if (newFlowId == 256) then
+	    assert(false)
 	    print("wrapping flowid, starting at 100 again.")
 	    newFlowId = 100
 	 end

@@ -48,8 +48,8 @@ eth.TYPE_PERCG = 0x0708
 eth.TYPE_PERC_DATA = 0x1212
 --  EtherType for Packet to drop
 eth.TYPE_DROP = 0x1111
---  EtherType for FIN ACK data packet
-eth.TYPE_FINACK = 0x2222
+--  EtherType for ACK data packet
+eth.TYPE_ACK = 0x2222
 
 --- EtherType for LACP (Actually, 'Slow Protocols')
 eth.TYPE_LACP = 0x8809
@@ -204,8 +204,8 @@ function etherHeader:getTypeString()
 	   cleartext = "(PERCD)"
 	elseif type == eth.TYPE_DROP then
 	   cleartext = "(DROP)"
-	elseif type == eth.TYPE_FINACK then
-	   cleartext = "(DATA FINACK)"
+	elseif type == eth.TYPE_ACK then
+	   cleartext = "(DATA ACK)"
 	else	   
 		cleartext = "(unknown)"
 	end

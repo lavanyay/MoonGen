@@ -56,12 +56,14 @@ function master(...)
 	 txDev:l2Filter(eth.TYPE_PERCG, perc_constants.CONTROL_QUEUE)
 	 --assert(filter.DROP ~= nil)
 	 txDev:l2Filter(eth.TYPE_DROP, perc_constants.DROP_QUEUE)
-	 txDev:l2Filter(eth.TYPE_FINACK, perc_constants.FINACK_QUEUE)
+	 txDev:l2Filter(eth.TYPE_ACK, perc_constants.ACK_QUEUE)
+
+	 assert(eth.TYPE_ACK ~= nil)
 	 
 	 local rxPort = 1
 	 rxDev = device.config{ port = rxPort, txQueues = 20, rxQueues = 4}
 	 rxDev:l2Filter(eth.TYPE_PERCG, perc_constants.CONTROL_QUEUE)
-	 rxDev:l2Filter(eth.TYPE_FINACK, perc_constants.FINACK_QUEUE)
+	 rxDev:l2Filter(eth.TYPE_ACK, perc_constants.ACK_QUEUE)
 	 rxDev:l2Filter(eth.TYPE_DROP, perc_constants.DROP_QUEUE)
 
 	 numLinksUp = device.waitForLinks()
@@ -98,10 +100,12 @@ function master(...)
 	       {["pipes"]= readyPipes, ["id"]=2},
 	       nil)
 
+	    local dataTxMonitorPipe = monitorPipes["data-0"]
 	    dpdk.launchLuaOnCore(
 	       core3, "loadDataSlave", txDev,
 	       pipesTxDev,
-	       {["pipes"]= readyPipes, ["id"]=3})
+	       {["pipes"]= readyPipes, ["id"]=3},
+	       dataTxMonitorPipe)
 
 	    dpdk.launchLuaOnCore(
 	       core4, "loadDataSlave", rxDev,
@@ -130,8 +134,8 @@ function loadControlSlave(dev, pipes, readyInfo, monitorPipe)
    control1.controlSlave(dev, pipes, readyInfo, monitorPipe)
 end
 
-function loadDataSlave(dev, pipes, readyInfo)
-   data1.dataSlave(dev, pipes, readyInfo)
+function loadDataSlave(dev, pipes, readyInfo, monitorPipe)
+   data1.dataSlave(dev, pipes, readyInfo, monitorPipe)
 end
 
 function loadMonitorSlave(monitorPipes, readyInfo)
