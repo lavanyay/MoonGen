@@ -119,7 +119,13 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		    assert(flow == tonumber(flow))
 		    pkt.udp:setSrcPort(tonumber(flow))
 		    pkt.udp:setDstPort(numSent+i)
-		    local customChecksum = checksum(pkt.udp,6)
+		    pkt.payload.uint16[0]= flow
+		    pkt.payload.uint16[1]= numSent+i
+		    pkt.payload.uint16[2]= math.random(0, 2^16 - 1)
+		    local customChecksum = checksum(pkt.payload,6)
+		    -- print("\nChecksum for transmitted packet (got "
+		    --  	     .. customChecksum .. ")\n")
+
 		    pkt.udp:setChecksum(customChecksum)
 		    pkt.eth.src:set(queueNo)
 		 end
@@ -128,8 +134,8 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		 --txBufs:offloadUdpChecksums()
 		 local numSentNow = queue:trySendN(txBufs, numToSend)
 		 numLeft = numLeft - numSentNow
-		 print("Sent " .. numSentNow .. " data packets of flow " .. flow
-			  .. ", " .. numLeft .. " to go")
+		 --print("Sent " .. numSentNow .. " data packets of flow " .. flow
+		 --	  .. ", " .. numLeft .. " to go")
 		 assert(numLeft >= 0)	      
 		 numPacketsLeft[flow] = numLeft
 		 numPacketsSent[flow] = numSent + numSentNow
@@ -156,12 +162,16 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		    local buf = rxBufs[i]
 		    local pkt = buf:getUdpPacket()
 		    assert(pkt.eth:getType() == eth.TYPE_IP)
-		    local customChecksum = checksum(pkt.udp, 6)
+		    local receivedChecksum = pkt.udp:getChecksum()
+		    local customChecksum = checksum(pkt.payload, 6)
+		    -- print("\nChecksum for received packet (got "
+		    --  	     .. receivedChecksum .. " and calculated "
+		    --  	     .. customChecksum .. ")\n")
 		    local flowId = pkt.udp:getSrcPort()
 		    local seqNum = pkt.udp:getDstPort()
 		    --local left = pkt.udp:getDstPort() --not used anywhere
-		    if (customChecksum == pkt.udp:getChecksum()) then
-		       --print("Received data packet on rxQueue at " .. readyInfo.id)
+		    if (customChecksum == receivedChecksum) then	
+		       -- print("Received original data packet on rxQueue at " .. readyInfo.id)
 		       if numPacketsReceived[flowId] == nil then	
 			  numPacketsReceived[flowId] = 0			  
 		       end
