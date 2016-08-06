@@ -69,6 +69,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	-- rxBufs
 	-- txCtr
 	local numPacketsReceived = {} -- flows to number of packets received
+	local maxSeqReceived = {}
 	local rxBufs = memory.bufArray() -- to receive data packets
 	local rxBufsAck = memory.bufArray()
 	local rxQueue = dev:getRxQueue(perc_constants.DATA_RXQUEUE)
@@ -102,7 +103,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	      end -- ends if next(msgs)..
 	   end
 
-	   do -- SENDING DATA PACKETS
+	   do -- SEND DATA PACKETS
 	      for flow, queueNo in pairs(queues) do
 		 local numLeft = numPacketsLeft[flow]
 		 local numSent = numPacketsSent[flow]
@@ -122,6 +123,8 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		    pkt.udp:setChecksum(customChecksum)
 		    pkt.eth.src:set(queueNo)
 		 end
+		 -- TODO(lav): BUG where packet with same seqNum
+		 --  received multiple times
 		 --txBufs:offloadUdpChecksums()
 		 local numSentNow = queue:trySendN(txBufs, numToSend)
 		 numLeft = numLeft - numSentNow
@@ -160,10 +163,20 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		    if (customChecksum == pkt.udp:getChecksum()) then
 		       --print("Received data packet on rxQueue at " .. readyInfo.id)
 		       if numPacketsReceived[flowId] == nil then	
-			  numPacketsReceived[flowId] = 0
+			  numPacketsReceived[flowId] = 0			  
 		       end
+
+		       if (maxSeqReceived[flowId] == nil
+			   or seqNum > maxSeqReceived[flowId]) then
+			  maxSeqReceived[flowId] = seqNum
+		       end
+		       
 		       numPacketsReceived[flowId] = numPacketsReceived[flowId] + 1
-		       if flowId == 123 then print ("Data Pkt " .. seqNum .. " got for flow 123") end
+
+		       -- TODO(lav): BUG where packet with same seqNum
+		       --  received multiple times and assert fails
+		       -- assert(maxSeqReceived[flowId] >= numPacketsReceived[flowId])
+		       
 		       if ackPending[flowId] == nil then
 			  ackPending[flowId] = true --numPacketsReceived[flowId]
 			  numAcks = numAcks + 1
