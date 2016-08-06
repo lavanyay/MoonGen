@@ -47,8 +47,8 @@ percc1.IS_FORWARD = 0x1
 
 -- newRate and oldRate field value for Control
 -- granularity in KBPS 
-percc1.RATE_INFINITE = 5000 --2000000000
-percc1.RATE_TEN_GBPS = 5000
+percc1.RATE_INFINITE = 20000 --2000000000
+percc1.RATE_TEN_GBPS = 8000
 
 -----------------------------------------------------------------------------------
 ---- PERC Per-Hop array structs 
@@ -160,7 +160,7 @@ end
 
 -- Set the new rate
 function percc1HostState:setNewRate(int)
-    int = int or percc1.RATE_INFINITE
+   int = int or percc1.RATE_INFINITE
     self.newRate = (int)
 end
 
@@ -201,8 +201,8 @@ function percc1Agg:setNumSat(int)
 end
 
 -- Set the num of unsat. flows
-function percc1Agg:setNumUnsat(int)
-    int = int or 0
+function percc1Agg:setNumUnsat(int)   
+   int = int or 0
     self.numUnsat = (int)
 end
 
@@ -303,8 +303,8 @@ end
 --- Set the newRate for the ith hop.
 --- @param int newRate[i] of percc1 header as 32 bit integer.
 function percc1Header:setNewRate(hop, int)
-	 if hop == 1 then self.hostState:setNewRate(int)
-	 else self.hostState2:setNewRate(int) end
+   if hop == 1 then self.hostState:setNewRate(int)
+   else self.hostState2:setNewRate(int) end
 end
 
 --- Set the oldRate for the ith hop.
@@ -352,8 +352,8 @@ end
 --- Set the numUnsat for the ith hop.
 --- @param int numUnsat[i] of percc1 header as 32 bit integer.
 function percc1Header:setNumUnsat(hop, int)
-	 if hop == 1 then self.agg:setNumUnsat(int)
-	 else self.agg2:setNumUnsat(int) end
+   if hop == 1 then self.agg:setNumUnsat(int)
+   else self.agg2:setNumUnsat(int) end
 end
 
 --- Check if exit packet. 
@@ -542,17 +542,19 @@ function percc1Header:fill(args, pre)
 	self:setMaxHops(args[pre .. "MaxHops"])
 
 	for i=1,percc1.NUM_HOPS do
-	    self:setNewRate(i, args[pre .. "NewRate" .. i])
-	    self:setOldRate(i, args[pre .. "OldRate" .. i])
-	    self:setNewLabel(i, args[pre .. "NewLabel" .. i])
-	    self:setOldLabel(i, args[pre .. "OldLabel" .. i])
-	    self:setLinkCapacity(i, args[pre .. "LinkCapacity" .. i])
-	    self:setSumSat(i, args[pre .. "SumSat" .. i])
-	    self:setNumSat(i, args[pre .. "NumSat" .. i])
-	    self:setNumUnsat(i, args[pre .. "NumUnsat" .. i])
-	    end
-	 self.agg2:setBos(1)
-	 self.hostState2:setBos(1)
+	   self:setNewRate(i, args[pre .. "NewRate" .. i])	  
+	   self:setOldRate(i, args[pre .. "OldRate" .. i])
+	   assert(self:getOldRate(i) == percc1.RATE_INFINITE)
+	   self:setNewLabel(i, args[pre .. "NewLabel" .. i])
+	   self:setOldLabel(i, args[pre .. "OldLabel" .. i])
+	   self:setLinkCapacity(i, args[pre .. "LinkCapacity" .. i])
+	   assert(self:getLinkCapacity(i) == percc1.RATE_INFINITE)
+	   self:setSumSat(i, args[pre .. "SumSat" .. i])
+	   self:setNumSat(i, args[pre .. "NumSat" .. i])
+	   self:setNumUnsat(i, args[pre .. "NumUnsat" .. i])
+	end
+	self.agg2:setBos(1)
+	self.hostState2:setBos(1)
 end
 
 --- Retrieve the values of all members.
