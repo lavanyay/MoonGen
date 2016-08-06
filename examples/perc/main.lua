@@ -26,9 +26,6 @@ local control1 = require "examples.perc.control2"
 -- perc data plane thread
 local data1 = require "examples.perc.data1"
 
--- local PKT_SIZE	= 80
- -- 11B b/n control and host state, 6 b/n .. agg 80
-
 function master(...)	 
    print("hello")
    --collectgarbage("stop")
