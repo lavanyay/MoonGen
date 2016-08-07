@@ -1,5 +1,5 @@
 ------------------------------------------------------------------------
---- @file percc2.lua
+--- @file percc1.lua
 --- @brief PERC (1) control protocol utility.
 --- Utility functions for the percc1_header structs 
 --- defined in \ref headers.lua . \n
@@ -53,10 +53,6 @@ percc1.RATE_TEN_GBPS = 8000
 -----------------------------------------------------------------------------------
 ---- PERC Per-Hop array structs 
 -----------------------------------------------------------------------------------
-local percc1LinkData = {}
-percc1LinkData.__index = percc1LinkData
-local percc1LinkDataType = ffi.typeof("struct percc1_link_data")
-
 local percc1HostState = {}
 percc1HostState.__index = percc1HostState
 local percc1HostStateType = ffi.typeof("struct percc1_host_state")
@@ -64,52 +60,6 @@ local percc1HostStateType = ffi.typeof("struct percc1_host_state")
 local percc1Agg = {}
 percc1Agg.__index = percc1Agg
 local percc1AggType = ffi.typeof("struct percc1_agg")
-
-
--- Retrieve the values of all members
--- return Values in string format
-function percc1LinkData:getString()
-   return "[dataQueueSize=" .. tostring(self:getDataQueueSize()) ..
-      ", ctrlQueueSize=" .. tostring(self:getControlQueueSize()) ..
-      ", linkUtilization=" .. tostring(self:getLinkUtilization()) ..
-      ", bos=" .. tostring(self:getBos()) .. "]"
-end
-
-function percc1LinkData:getDataQueueSize()
-   return self.dataQueueSize
-end
-
-function percc1LinkData:getControlQueueSize()
-   return self.dataQueueSize
-end
-
-function percc1LinkData:getLinkUtilization()
-   return self.linkUtilization
-end
-
--- Set the new data queue size (only to initialize)
-function percc1LinkData:setNewDataQueueSize(int)
-   int = int or 0
-    self.dataQueue = (int)
-end
-
--- Set the new control queue size (only to initialize)
-function percc1LinkData:setNewControlQueueSize(int)
-   int = int or 0
-    self.controlQueue = (int)
-end
-
--- Set the new data queue size (only to initialize)
-function percc1LinkData:setNewLinkUtilizationSize(int)
-   int = int or 0
-    self.linkUtilization = (int)
-end
-
--- Set the "bos" field (to 1 if last hop else 0)
-function percc1LinkData:setBos(int)
-    int = int or 0
-    self.bos = int
-end
 
 
 -- Retrieve the values of all members
@@ -278,11 +228,6 @@ function percc1HostState:getBos()
     return self.bos
 end
 
--- Retrieve the "bos" field
-function percc1LinkData:getBos()
-    return self.bos
-end
-
 
 --- Retrieve the string representation of the rates.
 --- @return Address in string format.
@@ -341,33 +286,6 @@ end
 function percc1Header:setMaxHops(int)
 	int = int or 0 
 	self.maxHops = int
-end
-
---- Set the bos field of linkData for the ith hop.
-function percc1Header:setBosLinkData(hop, int)
-	 if hop == 1 then self.linkData:setBos(int)
-	 else self.linkData2:setBos(int) end
-end
-
---- Set the dataQueueSize for the ith hop.
---- @param int dataQueueSize[i] of percc1 header as 32 bit integer.
-function percc1Header:setDataQueueSize(hop, int)
-   if hop == 1 then self.linkData:setDataQueueSize(int)
-   else self.linkData2:setDataQueueSize(int) end
-end
-
---- Set the controlQueueSize for the ith hop.
---- @param int controlQueueSize[i] of percc1 header as 32 bit integer.
-function percc1Header:setControlQueueSize(hop, int)
-   if hop == 1 then self.linkData:setControlQueueSize(int)
-   else self.linkData2:setControlQueueSize(int) end
-end
-
---- Set the linkUtilization for the ith hop.
---- @param int linkUtilization[i] of percc1 header as 32 bit integer.
-function percc1Header:setLinkUtilization(hop, int)
-   if hop == 1 then self.linkData:setLinkUtilization(int)
-   else self.linkData2:setLinkUtilization(int) end
 end
 
 --- Set the bos field of hostState for the ith hop.
@@ -533,30 +451,6 @@ function percc1Header:getBottleneckInfo(maxHops)
 	 return bnInfo
 end
 
---- Retrieve the dataQueueSize for the ith hop. 
---- @return dataQueueSize[i] as 32 bit integer.
-function percc1Header:getDataQueueSize(hop)
-	 if hop == 1 then return self.linkData:getDataQueueSize()
-	 else return self.linkData2:getDataQueueSize() end
-
-end
-
---- Retrieve the controlQueueSize for the ith hop. 
---- @return controlQueueSize[i] as 32 bit integer.
-function percc1Header:getControlQueueSize(hop)
-	 if hop == 1 then return self.linkData:getControlQueueSize()
-	 else return self.linkData2:getControlQueueSize() end
-
-end
-
---- Retrieve the linkUtilization for the ith hop. 
---- @return linkUtilization[i] as 32 bit integer.
-function percc1Header:getLinkUtilization(hop)
-	 if hop == 1 then return self.linkData:getLinkUtilization()
-	 else return self.linkData2:getLinkUtilization() end
-
-end
-
 --- Retrieve the newRate for the ith hop. 
 --- @return newRate[i] as 32 bit integer.
 function percc1Header:getNewRate(hop)
@@ -648,9 +542,6 @@ function percc1Header:fill(args, pre)
 	self:setMaxHops(args[pre .. "MaxHops"])
 
 	for i=1,percc1.NUM_HOPS do
-	   self:setDataQueueSize(i, args[pre .. "DataQueueSize" .. i])
-	   self:setControlQueueSize(i, args[pre .. "ControlQueueSize" .. i])
-	   self:setLinkUtilization(i, args[pre .. "LinkUtilization" .. i])
 	   self:setNewRate(i, args[pre .. "NewRate" .. i])	  
 	   self:setOldRate(i, args[pre .. "OldRate" .. i])
 	   assert(self:getOldRate(i) == percc1.RATE_INFINITE)
@@ -662,14 +553,8 @@ function percc1Header:fill(args, pre)
 	   self:setNumSat(i, args[pre .. "NumSat" .. i])
 	   self:setNumUnsat(i, args[pre .. "NumUnsat" .. i])
 	end
-	
-	self.agg:setBos(0)
-	self.hostState:setBos(0)
-	self.linkData:setBos(0)
-
 	self.agg2:setBos(1)
 	self.hostState2:setBos(1)
-	self.linkData2:setBos(1)
 end
 
 --- Retrieve the values of all members.
@@ -686,17 +571,14 @@ function percc1Header:get(pre)
 	args[pre .. "MaxHops"] = self:getMaxHops()
 	
 	for i=1,percc1.NUM_HOPS do
-	   args[pre .. "DataQueueSize" .. i] = self:getDataQueueSize(i)
-	   args[pre .. "ControlQueueSize" .. i] = self:getControlQueueSize(i)
-	   args[pre .. "LinkUtilization" .. i] = self:getLinkUtilization(i)
-	   args[pre .. "NewRate" .. i] = self:getNewRate(i)
-	   args[pre .. "NewLabel" .. i] = self:getNewLabel(i)
-	   args[pre .. "OldRate" .. i] = self:getOldRate(i)
-	   args[pre .. "OldLabel" .. i] = self:getOldLabel(i)
-	   args[pre .. "LinkCapacity" .. i] = self:getLinkCapacity(i)
-	   args[pre .. "SumSat" .. i] = self:getSumSat(i)
-	   args[pre .. "NumSat" .. i] = self:getNumSat(i)
-	   args[pre .. "NumUnsat" .. i] = self:getNumUnsat(i)
+		args[pre .. "NewRate" .. i] = self:getNewRate(i)
+		args[pre .. "NewLabel" .. i] = self:getNewLabel(i)
+		args[pre .. "OldRate" .. i] = self:getOldRate(i)
+		args[pre .. "OldLabel" .. i] = self:getOldLabel(i)
+		args[pre .. "LinkCapacity" .. i] = self:getLinkCapacity(i)
+		args[pre .. "SumSat" .. i] = self:getSumSat(i)
+		args[pre .. "NumSat" .. i] = self:getNumSat(i)
+		args[pre .. "NumUnsat" .. i] = self:getNumUnsat(i)
 	end
 	return args	
 end
@@ -704,23 +586,15 @@ end
 function percc1Header:doHton()
  -- changes linkCapacity, sumSat in agg
  -- changes oldRate, newRate in hostState
-   for i=1,percc1.NUM_HOPS do
-      local dataQueueSize = self:getDataQueueSize(i)
-      local controlQueueSize = self:getControlQueueSize(i)
-      local linkUtilization = self:getLinkUtilization(i)
-      
-      local linkCapacity = self:getLinkCapacity(i)
-      local sumSat = self:getSumSat(i)
-      local numSat = self:getNumSat(i)
-      local numUnsat = self:getNumUnsat(i)
+ for i=1,percc1.NUM_HOPS do
+     local linkCapacity = self:getLinkCapacity(i)
+     local sumSat = self:getSumSat(i)
+     local numSat = self:getNumSat(i)
+     local numUnsat = self:getNumUnsat(i)
 
-      local oldRate = self:getOldRate(i)
-      local newRate = self:getNewRate(i)
+     local oldRate = self:getOldRate(i)
+     local newRate = self:getNewRate(i)
 
-      self:setDataQueueSize(i, hton(dataQueueSize))
-      self:setControlQueueSize(i, hton(controlQueueSize))
-      self:setLinkUtilization(i, hton(linkUtilization))
-      
      self:setLinkCapacity(i, hton(linkCapacity))
      self:setSumSat(i, hton(sumSat))
      self:setNumSat(i, hton(numSat))
@@ -735,21 +609,13 @@ function percc1Header:doNtoh()
  -- changes linkCapacity, sumSat in agg
  -- changes oldRate, newRate in hostState
  for i=1,percc1.NUM_HOPS do
-      local dataQueueSize = self:getDataQueueSize(i)
-      local controlQueueSize = self:getControlQueueSize(i)
-      local linkUtilization = self:getLinkUtilization(i)
-      
-    local linkCapacity = self:getLinkCapacity(i)
+     local linkCapacity = self:getLinkCapacity(i)
      local sumSat = self:getSumSat(i)
      local numSat = self:getNumSat(i)
      local numUnsat = self:getNumUnsat(i)
 
      local oldRate = self:getOldRate(i)
      local newRate = self:getNewRate(i)
-
-     self:setDataQueueSize(i, ntoh(dataQueueSize))
-      self:setControlQueueSize(i, ntoh(controlQueueSize))
-      self:setLinkUtilization(i, ntoh(linkUtilization))
 
      self:setLinkCapacity(i, ntoh(linkCapacity))
      self:setSumSat(i, ntoh(sumSat))
@@ -769,14 +635,11 @@ function percc1Header:getString()
 	return "PERCC1 " .. self:getIsForwardString() ..
 	" " .. self:getIsExitString() ..
 	" hop " .. self:getHop() ..
-	   " maxHops " .. self:getMaxHops() ..
-	   "\n Hop 1 " .. self.hostState:getString() ..
-	   " Hop 2 " .. self.hostState2:getString() ..
-	   ".\n Hop 1 " .. self.agg:getString() ..
-	   " Hop 2 " .. self.agg2:getString()
-	"\n Hop 1 " .. self.linkData:getString() ..
-	   " Hop 2 " .. self.linkData2:getString() ..	   
-
+	" maxHops " .. self:getMaxHops() ..
+	"\n Hop 1 " .. self.hostState:getString() ..
+	" Hop 2 " .. self.hostState2:getString() ..
+	".\n Hop 1 " .. self.agg:getString() ..
+	" Hop 2 " .. self.agg2:getString() 
 
 --" Hop 3 " .. self.hostState[3]:getString() ..
 --" Hop 4 " .. self.hostState[4]:getString() ..
@@ -828,7 +691,6 @@ pkt.getPercc1Packet = packetCreate("eth", "percg", "percc1")
 ---- Metatypes
 ------------------------------------------------------------------------
 
-ffi.metatype("struct percc1_link_data", percc1LinkData)
 ffi.metatype("struct percc1_host_state", percc1HostState)
 ffi.metatype("struct percc1_agg", percc1Agg)
 ffi.metatype("struct percc1_header", percc1Header)

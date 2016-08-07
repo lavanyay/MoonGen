@@ -101,31 +101,35 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 	    -- TODO(lav): V fails
 	    assert(lastCommitNumber <= size)
 	    local lossRate = (100*(size-lastCommitNumber))/size
-	    
-	    monitorPipe:send(
-	       ffi.new("genericMsg",
-		       {["i1"]= flowId,
-			  ["d1"]= fct*1e6,
-			  ["d2"]= minFct*1e6,
-			  ["i2"]= lossRate,
-			  ["loop"]= size,
-			  ["valid"]= 1234,
-			  ["msgType"]= monitor.typeFlowFctLoss,
-			  ["time"] = now
-	    }))	       
 
+	    if (monitorPipe ~= nil) then
+	       monitorPipe:send(
+		  ffi.new("genericMsg",
+			  {["i1"]= flowId,
+			     ["d1"]= fct*1e6,
+			     ["d2"]= minFct*1e6,
+			     ["i2"]= lossRate,
+			     ["loop"]= size,
+			     ["valid"]= 1234,
+			     ["msgType"]= monitor.typeFlowFctLoss,
+			     ["time"] = now
+	       }))	       
+	    end
+	    
 	    activeFlows[flowId] = nil
 	    numActiveFlows = numActiveFlows - 1
+
 	    
-	    assert(monitorPipe ~= nil)
-	    print("sending msg of typeAppActiveFlowsNum")
-	    monitorPipe:send(
-	       ffi.new("genericMsg",
-		       {["i1"]= numActiveFlows,
-			  ["valid"]= 1234,
-			  ["msgType"]= monitor.typeAppActiveFlowsNum,
-			  ["time"] = now
-	    }))	       
+	    if (monitorPipe ~= nil) then
+	       print("sending msg of typeAppActiveFlowsNum")
+	       monitorPipe:send(
+		  ffi.new("genericMsg",
+			  {["i1"]= numActiveFlows,
+			     ["valid"]= 1234,
+			     ["msgType"]= monitor.typeAppActiveFlowsNum,
+			     ["time"] = now
+	       }))
+	    end
 	 end
       end
 
