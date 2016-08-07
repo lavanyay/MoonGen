@@ -26,10 +26,10 @@ function master(...)
 
 	 local thisCore = dpdk.getCore()
 	 local numCores = 8
-	 local dev_0 = device.config{ port = 0, txQueues = 20, rxQueues = 4}
-	 local dev_1 = device.config{ port = 1, txQueues = 20, rxQueues = 4}
-	 local dev_2 = device.config{ port = 2, txQueues = 20, rxQueues = 4}
-	 local dev_3 = device.config{ port = 3, txQueues = 20, rxQueues = 4}
+	 local dev_0 = device.config{ port = 0, txQueues = 1, rxQueues = 1}
+	 local dev_1 = device.config{ port = 1, txQueues = 1, rxQueues = 1}
+	 local dev_2 = device.config{ port = 2, txQueues = 1, rxQueues = 1}
+	 local dev_3 = device.config{ port = 3, txQueues = 1, rxQueues = 1}
 
 	 local numLinksUp = device.waitForLinks()
 
@@ -64,7 +64,7 @@ function rxSlave(dev)
    local rxBufs = memory.bufArray()
    local runtime = timer:new(10)
    while runtime:running() and dpdk.running() do
-      local rx = rxQueue:tryRecv(rxBufs)
+      local rx = rxQueue:recv(rxBufs)
       for i=1,rx do
 	 local buf = rxBufs[i]
 	 local pkt = buf:getEthernetPacket()
@@ -76,7 +76,7 @@ function rxSlave(dev)
 end
 
 function txSlave(dev)
-   local PKT_SIZE = 128
+   local PKT_SIZE = 65
    local thisCore = dpdk.getCore()
    print("Core " .. thisCore .. " sending on device " .. dev.id)
    local mem = memory.createMemPool{
@@ -85,10 +85,13 @@ function txSlave(dev)
 	 local pkt = buf:getPercgPacket()
 	 pkt:fill{
 	    pktLength = PKT_SIZE,
-	    ethSrc=0,
-	    ethDst="11:11:11:11:11:11",
+	    ethSrc="11:11:11:11:11:11",
+	    ethDst="22:22:22:22:22:22",
 	    ethType=eth.TYPE_DATA,
-	    percgIsData=percg.PROTO_DATA	    
+	    percgIsData=percg.PROTO_DATA,
+	    percgFlowId=0,
+	    percgSource=0,
+	    percgDestination=1
 	 }
       end
    }
@@ -99,21 +102,37 @@ function txSlave(dev)
       "33:33:33:33:33:33",
       "44:44:44:44:44:44"
    }
-   
-   local bufs = mem:bufArray(100)
+   local numAddr = 4
+   local numBufs = 12
+   local bufs = mem:bufArray(numBufs)
    local txQueue = dev:getTxQueue(0)
-
+   local pcapWriter = pcapWriter:newPcapWriter("sink-"..dev.id..".pcap")
+   
    local runtime = timer:new(10)
+   local firstBatch = true
    while runtime:running() and dpdk.running() do
       bufs:alloc(PKT_SIZE)
-      local i = 1   
-      while (i <= 97) do
+
+      local i = 0   
+      while (i+numAddr <= numBufs) do
 	 for addrNo, addr in ipairs(addrList) do
-	    bufs[i]:getEthernetPacket().eth:setDstString(addr) 
+	    local pkt = bufs[i+addrNo]:getPercgPacket()
+	    pkt.eth:setDstString(addr)
+	    pkt.payload.uint16[0]=0xFFFF
+	    pkt.payload.uint16[1]=0xFFFF
+	    pkt.payload.uint16[2]=0xFFFF
 	 end
-	 i = i + 1
+	 i = i + numAddr
       end
-      txQueue:send(bufs)
+
+      if firstBatch then
+	 pcapWriter:write(bufs)
+	 pcapWriter:close()
+	 firstBatch = false
+	 end
+
+      bufs:freeAll()
+      return
       --print("Sent 100 ethernet packets.\n")
    end
 end
