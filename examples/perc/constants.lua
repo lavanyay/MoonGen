@@ -3,7 +3,7 @@ constantsMod = {
    -- 11B b/n control and host state, 6 b/n .. agg 80
    ["DATA_PACKET_SIZE"] = 1500,
    ["ACK_PACKET_SIZE"] = 128,
-   ["DATA_RXQUEUE"] = 0,
+   ["DATA_RXQUEUE"] = 4,
    ["CONTROL_QUEUE"] = 1,
    ["ACK_QUEUE"] = 2,
    ["DROP_QUEUE"] = 3,

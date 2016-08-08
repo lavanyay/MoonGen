@@ -25,11 +25,13 @@ function data1Mod.log(str)
 end
 
 function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
-   data1Mod.log("starting dataSlave on " .. dpdk.getCore())
+   local thisCore = dpdk.getCore()
+   data1Mod.log("starting dataSlave on " .. thisCore)
 	-- one counter for total data throughput
 
 	ipc.waitTillReady(readyInfo)
 
+	
 	local mem = memory.createMemPool(function(buf)
 		buf:getUdpPacket():fill{
 			pktLength = DATA_PACKET_SIZE,
@@ -38,6 +40,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 			ip4Dst = "192.168.1.1",
 			udpSrc = 0, -- flow id
 			udpDst = 0, -- packets left	
+			ethType=eth.TYPE_PERC_DATA
 				       }
 	end)
 	mem:retain()
@@ -77,7 +80,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	-- txCtr
 	local numPacketsReceived = {} -- flows to number of packets received
 	local maxSeqReceived = {}
-	local rxBufs = memory.bufArray() -- to receive data packets
+	local rxBufs = memory.bufArray(100) -- to receive data packets
 	local rxBufsAck = memory.bufArray()
 	local rxQueue = dev:getRxQueue(perc_constants.DATA_RXQUEUE)
 	local rxQueueAck = dev:getRxQueue(perc_constants.ACK_QUEUE) -- special queue for Ack, JLT
@@ -163,14 +166,14 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		 txBufs:allocN(DATA_PACKET_SIZE, numToSend)
 		 for i=1,numToSend do		 
 		    local pkt = txBufs[i]:getUdpPacket()
-		    assert(pkt.eth:getType() == eth.TYPE_IP)
+		    assert(pkt.eth:getType() == eth.TYPE_PERC_DATA)
 		    assert(flow == tonumber(flow))
 		    pkt.udp:setSrcPort(tonumber(flow))
 		    pkt.udp:setDstPort(numSent+i)
 		    pkt.payload.uint16[0]= flow
 		    pkt.payload.uint16[1]= numSent+i
 		    pkt.payload.uint16[2]= math.random(0, 2^16 - 1)
-		    pkt.payload.uint16[3]= numLoopsSinceStart
+		    pkt.payload.uint16[3]= thisCore
 		    local customChecksum = checksum(pkt.payload,8)
 		    -- data1Mod.log("\nChecksum for transmitted packet (got "
 		    --  	     .. customChecksum .. ")\n")
@@ -254,7 +257,8 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 
 	      do -- RECEIVE DATA PACKETS
 		 local now = dpdk.getTime()
-		 local rx = rxQueue:tryRecv(rxBufs, 128)
+		 local rx = --rxQueue:tryRecv(rxBufs, 128)
+		    dpdkc.rte_eth_rx_burst_export(dev.id, rxQueue.qid, rxBufs.array, 5)
 		 
 		 if (rx > 0) then
 		    -- data1Mod.log("Received " .. rx .. " data packets")
@@ -263,7 +267,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		 for i = 1, rx do
 		    local buf = rxBufs[i]
 		    local pkt = buf:getUdpPacket()
-		    assert(pkt.eth:getType() == eth.TYPE_IP)
+		    assert(pkt.eth:getType() == eth.TYPE_PERC_DATA)
 		    local receivedChecksum = pkt.udp:getChecksum()
 		    local customChecksum = checksum(pkt.payload, 8)
 		    -- data1Mod.log("\nChecksum for received packet (got "
@@ -279,13 +283,15 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 			  numPacketsReceived[flowId] = 0
 		       end
 
-		       data1Mod.log("Received flowId: "
-				.. flowId
-				.. " seqNum " .. seqNum
-				.. " random " .. pkt.payload.uint16[2]
-				.. " queueNo " .. pkt.payload.uint16[3]
-				.. " checksum " .. customChecksum			     
-				.. " numPacketsReceived " .. numPacketsReceived[flowId])
+		       if flowId == 105 then
+			  print (thisCore .. " received flowId: "
+				    .. flowId
+				    .. " seqNum " .. seqNum
+				    .. " random " .. pkt.payload.uint16[2]
+				    .. " from core " .. pkt.payload.uint16[3]
+				    .. " checksum " .. customChecksum			     
+				    .. " numPacketsReceived " .. numPacketsReceived[flowId])
+		       end
 
 		       if (maxSeqReceived[flowId] == nil
 			   or seqNum > maxSeqReceived[flowId]) then

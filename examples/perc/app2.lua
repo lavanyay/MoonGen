@@ -35,7 +35,7 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
    print("Running application slave on core " .. thisCore)   
    ipc.waitTillReady(readyInfo)
    local lastSentTime = dpdk.getTime()
-   local newFlowId = 100
+   local newFlowId = 101
    local active = {} -- app has started but not definitively ended yet
    --local workload = {1, -1, 1, 1, 1, -1, 1, -1}
 

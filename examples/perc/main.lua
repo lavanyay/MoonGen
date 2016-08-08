@@ -47,22 +47,34 @@ function master(...)
 	 local core3 = (thisCore + 3)%numCores
 	 local core4 = (thisCore + 4)%numCores
 	 local core5 = (thisCore + 5)%numCores
+
+	 local rxDevMemPool = memory.createMemPool{
+	    n = 409600, socket = 0}
+	 rxDevMemPool:retain()
+
+	 local txDevMemPool = memory.createMemPool{
+	    n = 409600, socket = 0}
+	 txDevMemPool:retain()
 	 
-	 local txPort = 0
-	 txDev = device.config{ port = txPort, txQueues = 20, rxQueues = 4}
+	 local txPort = 1
+	 txDev = device.config{ port = txPort, txQueues = 20, rxQueues = 10, mempool=txDevMemPool,
+				rx_descs=40, tx_descs=40}
 	 txDev:l2Filter(eth.TYPE_PERCG, perc_constants.CONTROL_QUEUE)
 	 --assert(filter.DROP ~= nil)
 	 txDev:l2Filter(eth.TYPE_DROP, perc_constants.DROP_QUEUE)
 	 txDev:l2Filter(eth.TYPE_ACK, perc_constants.ACK_QUEUE)
+	 txDev:l2Filter(eth.TYPE_PERC_DATA, perc_constants.DATA_RXQUEUE)
 
 	 assert(eth.TYPE_ACK ~= nil)
 	 
-	 local rxPort = 1
-	 rxDev = device.config{ port = rxPort, txQueues = 20, rxQueues = 4}
+	 local rxPort = 0
+	 rxDev = device.config{ port = rxPort, txQueues = 20, rxQueues = 10, mempool = rxDevMemPool,
+				rx_descs=40, tx_descs=40}
 	 rxDev:l2Filter(eth.TYPE_PERCG, perc_constants.CONTROL_QUEUE)
 	 rxDev:l2Filter(eth.TYPE_ACK, perc_constants.ACK_QUEUE)
 	 rxDev:l2Filter(eth.TYPE_DROP, perc_constants.DROP_QUEUE)
-
+	 rxDev:l2Filter(eth.TYPE_PERC_DATA, perc_constants.DATA_RXQUEUE)
+	 
 	 local numLinksUp = device.waitForLinks()
 
 	 print("waiting for links")
@@ -104,22 +116,34 @@ function master(...)
 	       {["pipes"]= readyPipes, ["id"]=3},
 	       dataTxMonitorPipe)
 
-	    dpdk.launchLuaOnCore(
-	       core4, "loadDataSlave", rxDev,
-	       pipesRxDev,
-	       {["pipes"]= readyPipes, ["id"]=4})
-
-	    dpdk.launchLuaOnCore(
-	       core5, "loadMonitorSlave", monitorPipes,
-	       {["pipes"]= readyPipes, ["id"]=5})
+	    local dataTx1MonitorPipe = monitorPipes["data-1"]
+	    -- dpdk.launchLuaOnCore(
+	    --    core4, "loadDataSlave", rxDev,
+	    --    pipesRxDev,
+	    --    {["pipes"]= readyPipes, ["id"]=4},
+	    --    dataTx1MonitorPipe)
 
 	    local appMonitorPipe = monitorPipes["app-0"]
 	    assert(appMonitorPipe ~= nil)
 	    assert(app2.applicationSlave ~= nil)
-	    app2.applicationSlave(
+
+	    dpdk.launchLuaOnCore(
+	       core4, "loadApplicationSlave", 
 	       pipesTxDev,
 	       {["pipes"]= readyPipes, ["id"]=6},
 	       appMonitorPipe)
+
+	    
+	    dpdk.launchLuaOnCore(
+	       core5, "loadMonitorSlave", monitorPipes,
+	       {["pipes"]= readyPipes, ["id"]=5})
+
+	    loadDataSlave(rxDev, pipesRxDev, {["pipes"]= readyPipes, ["id"]=4},
+			  dataTx1MonitorPipe)
+	    -- app2.applicationSlave(
+	    --    pipesTxDev,
+	    --    {["pipes"]= readyPipes, ["id"]=6},
+	    --    appMonitorPipe)
 
 	    dpdk.waitForFirstSlave({core1, core2, core3, core4})
 	    --dpdk.waitForSlaves()
@@ -133,6 +157,10 @@ end
 
 function loadDataSlave(dev, pipes, readyInfo, monitorPipe)
    data1.dataSlave(dev, pipes, readyInfo, monitorPipe)
+end
+
+function loadApplicationSlave(pipes, readyInfo, monitorPipe)
+   app2.applicationSlave(pipes, readyInfo, monitorPipe)
 end
 
 function loadMonitorSlave(monitorPipes, readyInfo)
