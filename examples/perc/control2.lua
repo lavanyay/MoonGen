@@ -228,10 +228,14 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 	  do
 	     local rx = rxQueue:tryRecv(bufs, 128)
 	     local now = dpdk.getTime()
-	     for i = 1, rx do	    
+	     for i = 1, rx do
+
 		local pkt = bufs[i]:getPercc1Packet()
 		pkt.percc1:doNtoh()
 
+		if (i==1) then
+		   print(readyInfo.id .. " got packet addressed to ethDst "
+			 .. pkt.eth:getDst()) end
 		-- ingress link processing for reverse packets
 		if pkt.percc1:getIsForward() == percc1.IS_NOT_FORWARD then
 		   control2Mod.log("\nRx-ing FlowId " .. pkt.percg:getFlowId()
@@ -456,7 +460,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		      assert(flowId >= 100)
 		      pkt.percg:setFlowId(flowId)
 		      pkt.percg:setDestination(msg.destination)
-
+		      pkt.eth:setDst(0x111111111111)
 		      -- egress link processing after sending out
 		      -- forward packets
 		      if (pkt.eth:getType() ~= eth.TYPE_DROP and

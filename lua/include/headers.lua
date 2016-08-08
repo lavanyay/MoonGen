@@ -110,6 +110,13 @@ ffi.cdef[[
         uint8_t            flowId;
      };
 
+    struct percc1_link_data {         
+          uint32_t dataQueueSize;
+          uint32_t controlQueueSize;
+          uint32_t linkUtilization;
+          uint8_t bos;
+    };
+
     struct percc1_host_state {         
           uint32_t newRate;
           uint8_t newLabel;
@@ -131,6 +138,8 @@ ffi.cdef[[
         uint8_t         isForward;
         uint8_t            hop;
         uint8_t            maxHops;
+        struct percc1_link_data    linkData;
+        struct percc1_link_data    linkData2;
         struct percc1_host_state    hostState;
         struct percc1_host_state    hostState2;
         struct percc1_agg        agg;        
