@@ -23,6 +23,8 @@ args = parser.parse_args()
 """
 example
 python simplePlot.py --dataName flow_tx_rate_configured --value configured --groupBy flow --groupByFor 100 101 --startTime 6.70e6 --endTime 6.74e6
+
+head -n 40 all_flows.txt | xargs -n 40 python simplePlot.py --dataName flow_tx_rate_configured --value configured --groupBy flow --groupByFor
 """
 
 def show_datanames(filename):
