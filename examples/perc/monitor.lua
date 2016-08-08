@@ -22,9 +22,11 @@ monitorMod = {
    ["typeControlStatsPerDpdkLoop"]=15, --us
    ["typeNumActiveQueues"]=16,
    ["typeControlPacketRtt"]=17, --us
+   ["typeDataQueueSize"]=18,
    ["constDataNumLoops"]=1000,
    ["constControlNumLoops"]=1000000,
-   ["constControlSamplePc"]=30
+   ["constControlSamplePc"]=30,
+   ["constDataSamplePc"]=10
 }
 
 
@@ -176,6 +178,33 @@ function monitorMod.format(msg)
 		.. "us " .. msg.d2
 		.. "us " .. msg.i2
 		.. "% " .. msg.loop
+		.. "\n")
+   elseif msg.msgType == monitorMod.typeDataQueueSize then
+      local wantedToSend = msg.d2
+      local sent = msg.d1
+      local queueSizeValid = 0
+      local queueSize = 0
+      local maxSize = perc_constants.NIC_DESCRIPTORS_PER_QUEUE
+      -- TODO(lav): check this is right .. btw it's possible
+      -- that wantedToSend = send = 128 while maxSize only 40
+      -- queueing only when oversubscribed!
+      if (sent < wantedToSend) then
+	 queueSize = wantedToSend - sent
+	 if queueSize > maxSize then queueSize = maxSize end
+	 -- all unsent packets are dropped either way ^
+	 -- sent equals number of packets ever put on queue
+	 -- including those serviced and those currently enqueued
+	 queueSizeValid = 1
+	 end
+            
+      return("data_queue_size time_queue_flow_sent_total_sizevalid_size "
+		.. msg.time
+		.. " " .. msg.i1
+		.. " " .. msg.i2
+		.. " " .. sent
+		.. " " .. wantedToSend
+		.. " " .. queueSizeValid
+		.. " " .. queueSize
 		.. "\n")
    elseif msg.msgType == monitorMod.typeDataStatsPerDpdkLoop then
       local numLoops = monitorMod.constDataNumLoops * 1.0

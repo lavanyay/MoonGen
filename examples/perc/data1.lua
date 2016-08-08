@@ -40,7 +40,8 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 			udpDst = 0, -- packets left	
 				       }
 	end)
-
+	mem:retain()
+	
 	local ackMem = memory.createMemPool(function(buf)
 		buf:getUdpPacket():fill{
 			pktLength = ACK_PACKET_SIZE,
@@ -51,7 +52,8 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 			udpDst = 0, -- packets received
 				       }
 	end)
-
+	ackMem:retain()
+	
 	-- state for tx
 	-- numPacketsLeft[flow]
 	-- queue[flow]
@@ -180,9 +182,45 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		 --  received multiple times
 		 --txBufs:offloadUdpChecksums()
 		 assert(txBufs.size == numToSend)
-		 local numSentNow = dev:getTxQueue(queueNo):send(txBufs)
+
+		 local numSentNow = 0
+
+		 if numLoopsSinceStart % 100 > monitor.constDataSamplePc then
+		    -- in the common case, want to loop in C till
+		    -- all packets are transmitted, since our
+		    -- while loop isn't tight and we've already spent
+		    -- too much time dilly-dallying around data
+		    -- packets without actuall sending them
+		    numSentNow = dev:getTxQueue(queueNo):send(txBufs)
+		 else
+		 -- if we want to sample queue size, should do
+		 -- rte_eth_tx_burst and see how many packets descriptors
+		 -- we can put on ring..
+		    numSentNow = dpdkc.rte_eth_tx_burst_export(
+		       dev.id, queueNo, txBufs.array, txBufs.size
+		    )
+		    if monitorPipe ~= nil then
+		       monitorPipe:send(
+			  ffi.new("genericMsg",
+				  {["valid"]= 1234,
+				     ["i1"]= queueNo,
+				     ["i2"]= flow,
+				     ["d1"]= numSentNow,
+				     ["d2"]=txBufs.size,
+				     ["msgType"]= monitor.typeDataQueueSize,
+				     ["time"]= now }))
+		    end
+		 end
+		 -- corrupt every mbuf udp packet ... doesn't help
+		 -- still see dup data packets
+		 -- for i=1,txBufs.size do
+		 --    txBufs[i]:getUdpPacket().udp:setChecksum(0)
+		 -- end
+		 txBufs:freeAll()
+
 		 numTxDataPacketsSinceLog = numTxDataPacketsSinceLog
 		    + numSentNow
+		 
 		 numLeft = numLeft - numSentNow
 		 --data1Mod.log("Sent " .. numSentNow .. " data packets of flow " .. flow
 		 --	  .. ", " .. numLeft .. " to go")
@@ -292,9 +330,12 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		       bufNo = bufNo + 1
 		    end
 		    assert(bufNo == numAcks+1)
-		    local numSent = txQueueAck:sendN(txBufsAck, numAcks)
+		    --local numSent = txQueueAck:sendN(txBufsAck, numAcks)
+		    local numSent = dpdkc.rte_eth_tx_burst_export(
+		       dev.id, perc_constants.ACK_QUEUE, txBufsAck.array, numAcks
+		    ) -- may not send all pending acks..		    
 		    numTxAckPacketsSinceLog = numTxAckPacketsSinceLog + numSent
-
+		    txBufsAck:freeAll()
 		    --data1Mod.log("data " .. readyInfo.id .. " sent " .. numSent .. " of "
 		    --	       .. numAcks .. " pending Acks.")
 		 end
