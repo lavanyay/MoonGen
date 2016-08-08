@@ -15,6 +15,7 @@ local ipc = require "examples.perc.ipc"
 local Link1 = require "examples.perc.perc_link"
 
 local CONTROL_PACKET_SIZE	= perc_constants.CONTROL_PACKET_SIZE
+local ff64 = 0xFFFFFFFFFFFFFFFF
 
 control2Mod = {}
 
@@ -40,6 +41,54 @@ function control2Mod.log(str)
    if perc_constants.LOG_CONTROL then
       print(str)
    end
+end
+
+function control2Mod.postProcessTiming(pkt, now, monitorPipe)
+   -- if this is a packet about to be sent out from source
+   -- check for old time in payload
+   local nowUs = now * 1e6
+   local startTimeUs = pkt.payload.uint64[0]
+   local complement = pkt.payload.uint64[1]
+   assert(bit.band(ff64, startTimeUs) == complement)
+   assert(startTimeUs > 0)
+
+   -- sample RTTs of some packets
+   if monitorPipe ~= nil and nowUs % 100 < monitor.constControlSamplePc then      
+      local diff = nowUs - startTimeUs
+      --print("Pkt took " .. tostring(diff) .. " us.")
+      monitorPipe:send(
+	 ffi.new("genericMsg",
+		 {["valid"]= 1234,
+		    ["time"]= now,
+		    ["msgType"]= monitor.typeControlPacketRtt,
+		    ["i1"]= diff}))
+      end
+
+   pkt.payload.uint64[0] = nowUs
+   pkt.payload.uint64[1] = bit.band(ff64, nowUs)
+   -- compare with new time and log RTT
+   -- if this is a packet about to be sent out from receiver
+   -- do nothing
+end
+
+function control2Mod.postProcessTimingNew(pkt, now)
+   -- if this is a packet about to be sent out from source
+   -- check for old time in payload
+   -- compare with new time and log RTT
+   -- if this is a packet about to be sent out from receiver
+   -- do nothing
+
+   local nowUs = now * 1e6
+   local startTimeUs = pkt.payload.uint64[0]
+   -- TODO(lav): assertion fails probably cuz we get a used packet
+   -- assert(startTimeUs == 0)
+   
+   --local diff = now - startTime
+
+   pkt.payload.uint64[0] = nowUs
+   pkt.payload.uint64[1] = bit.band(ff64, nowUs)
+   print("Pkt stamped with " .. tostring(nowUs) .. " us.")
+   
 end
 
 function control2Mod.percc1ProcessAndGetRate(pkt)
@@ -169,6 +218,10 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
        local numLoopsSinceStart = 0       
        local lastLoggedDpdkLoopStartTime = 0
 
+       local numTxNewControlPacketsSinceLog = 0
+       local numTxOngoingControlPacketsSinceLog = 0
+       local numRxControlPacketsSinceLog = 0
+
        -- Hmm(lav) No limit to mbufs I can allocate
        -- without freeing: By default mempool is 2048 bufs
        -- large, and these newBufs once allocated
@@ -189,14 +242,22 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 	  numLoopsSinceStart = numLoopsSinceStart + 1
 
 	  
-	  if monitorPipe ~= nil and numLoopsSinceStart % 100 == 0 then
-	     monitorPipe:send(
-		ffi.new("genericMsg",
-			{["valid"]= 1234,
-			   ["i1"]= numLoopsSinceStart,
-			   ["msgType"]= monitor.typeControlDpdkLoopStartTime,
-			   ["time"]= (dpdkLoopStartTime - lastLoggedDpdkLoopStartTime) * 1e3 }))
-	     lastLoggedDpdkLoopStartTime = dpdkLoopStartTime
+	  if monitorPipe ~= nil and numLoopsSinceStart % monitor.constControlNumLoops == 0 then
+	     	      monitorPipe:send(
+		 ffi.new("genericMsg",
+			 {["valid"]= 1234,
+			    ["time"]= dpdkLoopStartTime,
+			    ["msgType"]= monitor.typeControlStatsPerDpdkLoop,
+			    ["d1"]= (dpdkLoopStartTime
+					  - lastLoggedDpdkLoopStartTime),
+			    ["d2"]= numTxNewControlPacketsSinceLog,
+			    ["i1"]= numTxOngoingPacketsSinceLog,
+		      	    ["i2"]= numRxControlPacketsSinceLog}))
+
+		      numTxNewControlPacketsSinceLog = 0
+		      numTxOngoingControlPacketsSinceLog = 0
+		      numRxControlPacketsSinceLog = 0
+		      lastLoggedDpdkLoopStartTime = dpdkLoopStartTime
 	  end
 
 	  -- log actual data rates of all active queues every PERIOD
@@ -227,15 +288,16 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 	  -- echoes received packets
 	  do
 	     local rx = rxQueue:tryRecv(bufs, 128)
+	     numRxControlPacketsSinceLog = numRxControlPacketsSinceLog + rx
 	     local now = dpdk.getTime()
 	     for i = 1, rx do
 
 		local pkt = bufs[i]:getPercc1Packet()
 		pkt.percc1:doNtoh()
 
-		if (i==1) then
-		   print(readyInfo.id .. " got packet addressed to ethDst "
-			 .. pkt.eth:getDst()) end
+		-- if (i==1) then
+		--    print(readyInfo.id .. " got packet addressed to ethDst "
+		-- 	 .. pkt.eth:getDst()) end
 		-- ingress link processing for reverse packets
 		if pkt.percc1:getIsForward() == percc1.IS_NOT_FORWARD then
 		   control2Mod.log("\nRx-ing FlowId " .. pkt.percg:getFlowId()
@@ -287,11 +349,13 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		   elseif queues[flowId] == nil then -- flow ended
 		      --control2Mod.log("tx control gets regular pkt for no-more-data flow " .. pkt.percg:getFlowId())
 		      control2Mod.percc1ProcessAndGetRate(pkt)
+		      control2Mod.postProcessTiming(pkt, now, monitorPipe)
 		      assert(pkt.percc1:getIsForward() == percc1.IS_FORWARD)
 		      pkt.percc1:setIsExit(percc1.IS_EXIT)	      
 		   else -- flow hasn't ended yet, update rates
 		      --control2Mod.log("tx control gets regular pkt for have-more-data flow " .. pkt.percg:getFlowId())
 		      local rate1 = control2Mod.percc1ProcessAndGetRate(pkt)
+		      control2Mod.postProcessTiming(pkt, now, monitorPipe)
 		      if monitorPipe ~= nil then
 			 monitorPipe:send(
 			    ffi.new("genericMsg",
@@ -325,6 +389,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 			    rateInfo.changeTime = -1
 			    local dTxQueue = dev:getTxQueue(queueNo)
 			    local configuredRate = rate1
+			    configuredRate = 1000
 			    dTxQueue:setRate(configuredRate)
 			    if monitorPipe ~= nil then
 			       monitorPipe:send(
@@ -393,6 +458,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		pkt.percc1:doHton()
 	     end -- for i = 1, rx
 	     txQueue:sendN(bufs, rx)
+	     numTxOngoingControlPacketsSinceLog = numTxOngoingControlPacketsSinceLog + rx
 	  end -- do ECHOES RECEIVED PACKETS
 
 
@@ -426,6 +492,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		      queueRates[queue].currentRate = 1
 		      local configuredRate = queueRates[queue].currentRate
 		      local dTxQueue = dev:getTxQueue(queue)
+		      configuredRate = 1000
 		      dTxQueue:setRate(configuredRate)
 		      if monitorPipe ~= nil then
 			 monitorPipe:send(
@@ -461,6 +528,8 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		      pkt.percg:setFlowId(flowId)
 		      pkt.percg:setDestination(msg.destination)
 		      pkt.eth:setDst(0x111111111111)
+
+		      control2Mod.postProcessTimingNew(pkt, now)
 		      -- egress link processing after sending out
 		      -- forward packets
 		      if (pkt.eth:getType() ~= eth.TYPE_DROP and
@@ -487,6 +556,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		   end -- if next(freeQueues)..
 		end -- for msgNo, msg..
 		txQueue:sendN(newBufs, numNew)
+		numTxNewControlPacketsSinceLog = numTxNewControlPacketsSinceLog + numNew
 		--control2Mod.log("Sent " .. numNew .. " new packets")
 	     else
 		noNewPackets = noNewPackets + 1
@@ -554,6 +624,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 
 		   local configuredRate = queueRates[queueNo].currentRate
 		   local dTxQueue = dev:getTxQueue(queueNo)
+		   configuredRate = 1000
 		   dTxQueue:setRate(configuredRate)
 
 		   if monitorPipe ~= nil then

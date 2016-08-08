@@ -75,8 +75,8 @@ def filter_lines(filename, f, key, val, startTime, endTime):
             timeIndex = fmtTokens.index("time")
             valIndex = fmtTokens.index(val)
             newWords = words[2:]
-            timeVal = newWords[timeIndex]
-            if (timeVal > startTime and timeVal < endTime):
+            timeVal = float(newWords[timeIndex])
+            if (timeVal >= startTime and timeVal <= endTime):
                 yield  newWords[timeIndex] + " " + newWords[valIndex]
                 
 with open(args.filename) as f:
@@ -171,7 +171,7 @@ with open(args.filename) as f:
                 plt.legend(tuple(arrLabelMarkers), tuple(arrLabels), loc='best')
 
             plt.savefig(outputFileName)
-
+            #os.system("scp outputFileName lavanyaj@yuba.stanford.edu:~/public_html/percdemo/")
 
             #plt.scatter(data[2:,1], data[2:,2], c=data[2:,0], s=500)
             

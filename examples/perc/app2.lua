@@ -6,7 +6,7 @@ local utils = require "utils"
 
 app2Mod = {}
 local PKT_PAYLOAD_SIZE = 1200
-local MAX_FLOW_SIZE = 15000000 --15000000
+local MAX_FLOW_SIZE = (2000 * 1500) -- 15000000 --15000000
 local MEAN_INTER_ARRIVAL_TIME = 1
 
 -- app generates workload with poisson arrival and random size distribution (for now)
@@ -27,7 +27,7 @@ end
 -- in main loop
 
 function getSize()
-   return (math.random() * MAX_FLOW_SIZE)
+   return ((0.9 + math.random()/10.0) * MAX_FLOW_SIZE)
 end
 
 function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)

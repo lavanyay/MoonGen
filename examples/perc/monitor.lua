@@ -2,6 +2,7 @@ local ffi = require("ffi")
 local dpdk	= require "dpdk"
 local ipc = require "examples.perc.ipc"
 local pipe		= require "pipe"
+local perc_constants = require "examples.perc.constants"
 
 monitorMod = {
    ["typeDataTxMbps"]=1,
@@ -17,6 +18,13 @@ monitorMod = {
    ["typeControlDpdkLoopStartTime"]=11,
    ["typeCorruptedDataPkts"]=12,
    ["typeFlowFctLoss"]=13,
+   ["typeDataStatsPerDpdkLoop"]=14, --us
+   ["typeControlStatsPerDpdkLoop"]=15, --us
+   ["typeNumActiveQueues"]=16,
+   ["typeControlPacketRtt"]=17, --us
+   ["constDataNumLoops"]=1000,
+   ["constControlNumLoops"]=1000000,
+   ["constControlSamplePc"]=30
 }
 
 
@@ -39,6 +47,7 @@ ffi.cdef[[
 typedef struct {
  double d1, d2; 
  int i1, i2; 
+ int i3;
  double time;
  int loop;
  int valid, msgType;
@@ -108,6 +117,16 @@ function monitorMod.format(msg)
    -- TODO(lav): array of handlers instead of if else ..
    if msg.msgType == monitorMod.typeDataTxMbps then
       return ("tx_throughput_mbps " .. msg.d1 .. "\n")
+   elseif msg.msgType == monitorMod.typeNumActiveQueues then
+      return("app_active_queues time_num "
+		.. msg.time
+		.. " " .. msg.i1
+		.. "\n")
+   elseif msg.msgType == monitorMod.typeControlPacketRtt then
+      return("control_packet_rtt time_rttus "
+		.. msg.time
+		.. " " .. msg.i1
+		.. "\n")
    elseif msg.msgType == monitorMod.typeAppActiveFlowsNum then
       return("app_active_flows time_num "
 		.. msg.time
@@ -158,7 +177,114 @@ function monitorMod.format(msg)
 		.. "us " .. msg.i2
 		.. "% " .. msg.loop
 		.. "\n")
-   else      
+   elseif msg.msgType == monitorMod.typeDataStatsPerDpdkLoop then
+      local numLoops = monitorMod.constDataNumLoops * 1.0
+
+      local runtime = msg.d1
+
+      local txDataPackets = msg.d2
+      local txAckPackets = msg.i2
+      local rxDataPackets = msg.i1
+      local rxAckPackets = msg.loop
+      
+      local txDataBytes = txDataPackets*perc_constants.DATA_PACKET_SIZE
+      local txAckBytes = txAckPackets*perc_constants.ACK_PACKET_SIZE
+      local txTotalBytes =  txDataBytes + txAckBytes
+	 
+      local rxDataBytes = rxDataPackets*perc_constants.DATA_PACKET_SIZE 
+      local rxAckBytes = rxAckPackets*perc_constants.ACK_PACKET_SIZE
+      local rxTotalBytes = rxDataBytes + rxAckBytes
+
+      local txDataThroughput = (8.0*txDataBytes)/runtime
+      local txAckThroughput = (8.0*txAckBytes)/runtime      
+      local txTotalThroughput = txDataThroughput + txAckThroughput
+
+      local rxDataThroughput = (8.0*rxDataBytes)/runtime
+      local rxAckThroughput = (8.0*rxAckBytes)/runtime      
+      local rxTotalThroughput = rxDataThroughput + rxAckThroughput
+
+
+      local line1 = ("data_stats_per_dpdk_loop_raw "
+			.. "time_runtimeus_txdatapkts_rxdatapkts_txackpkts_rxackpkts "
+			..  msg.time
+			.." " .. (runtime * (1e6/numLoops))
+			.. " " .. (txDataPackets/numLoops)
+			.. " " .. (rxDataPackets/numLoops)
+			.. " " .. (txAckPackets/numLoops)
+		     	.. " " .. (rxAckPackets/numLoops))
+
+
+      local line2 =  ("data_stats_per_dpdk_loop_processed_tx "
+			.. "time_txdatabytes_txackbytes_txtotalbytes_txdatabps_txackbps_txtotalbps "
+			..  msg.time
+			 .." " .. (txDataBytes/numLoops)
+			 .. " " .. (txAckBytes/numLoops)
+			 .. " " .. (txTotalBytes/numLoops)
+			 .. " " .. (txDataThroughput)
+			 .. " " .. (txAckThroughput)
+			 .. " " .. (txTotalThroughput))
+
+      local line3 =  ("data_stats_per_dpdk_loop_processed_rx "
+			 .. "time_rxdatabytes_rxackbytes_rxtotalbytes_rxdatabps_rxackbps_rxtotalbps "
+			 ..  msg.time
+			 .." " .. (rxDataBytes/numLoops)
+			 .. " " .. (rxAckBytes/numLoops)
+			 .. " " .. (rxTotalBytes/numLoops)
+			 .. " " .. (rxDataThroughput)
+			 .. " " .. (rxAckThroughput)
+			 .. " " .. (rxTotalThroughput))
+
+      return (line1 .. "\n" .. line2 .. "\n"..  line3 .. "\n")
+   elseif msg.msgType == monitorMod.typeControlStatsPerDpdkLoop then
+      local numLoops = monitorMod.constControlNumLoops * 1.0
+
+      local runtime = msg.d1
+
+      local txNewControlPackets = msg.d2
+      local txOngoingControlPackets = msg.i1
+      local rxControlPackets = msg.i2
+      
+      local txNewControlBytes = txNewControlPackets*perc_constants.CONTROL_PACKET_SIZE
+      local txOngoingControlBytes = txOngoingControlPackets*perc_constants.CONTROL_PACKET_SIZE
+      local txTotalBytes =  txNewControlBytes + txOngoingControlBytes
+	 
+      local rxControlBytes = rxControlPackets*perc_constants.CONTROL_PACKET_SIZE 
+      local rxTotalBytes = rxControlBytes
+
+      local txNewControlThroughput = (8.0*txNewControlBytes)/runtime
+      local txOngoingControlThroughput = (8.0*txOngoingControlBytes)/runtime      
+      local txTotalThroughput = txNewControlThroughput + txOngoingControlThroughput
+
+      local rxControlThroughput = (8.0*rxControlBytes)/runtime
+      local rxTotalThroughput = rxControlThroughput
+
+
+      local line1 = ("control_stats_per_dpdk_loop_raw "
+			.. "time_runtimeus_txnewcontrolpkts_txongoingcontrolpkts_rxcontrolpkts "
+			..  msg.time
+			.." " .. (runtime * (1e6/numLoops))
+			.. " " .. (txNewControlPackets/numLoops)
+			.. " " .. (txOngoingControlPackets/numLoops)
+			.. " " .. (rxControlPackets/numLoops))
+
+      local line2 =  ("control_stats_per_dpdk_loop_processed_tx "
+			.. "time_txnewcontrolbytes_txongoingcontrolbytes_txtotalbytes_txnewcontrolbps_txongoingcontrolbps_txtotalbps "
+			..  msg.time
+			 .." " .. (txNewControlBytes/numLoops)
+			 .. " " .. (txOngoingControlBytes/numLoops)
+			 .. " " .. (txTotalBytes/numLoops)
+			 .. " " .. (txNewControlThroughput)
+			 .. " " .. (txOngoingControlThroughput)
+			 .. " " .. (txTotalThroughput))
+
+      local line3 =  ("control_stats_per_dpdk_loop_processed_rx "
+			 .. "time_rxcontrolbytes_rxcontrolbps "
+			 ..  msg.time
+			 .." " .. (rxControlBytes/numLoops)
+			 .. " " .. (rxControlThroughput))
+      
+      return (line1 .. "\n" .. line2 .. "\n"..  line3 .. "\n")
+   else            
       return nil
    end
 end

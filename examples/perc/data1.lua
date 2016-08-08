@@ -82,13 +82,42 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	local txQueueAck = dev:getTxQueue(perc_constants.ACK_QUEUE) -- special queue for Ack, JLT
 	--local rxCtr = stats:newDevRxCounter(dev, "plain")
 
-	local dpdkLoopCounter = 0
+	local numLoopsSinceStart = 0
+	local lastLoggedDpdkLoopStartTime = 0
+	
 	local corruptedDataPkts = 0
 
-	while dpdk.running() do	   
-	   local now = dpdk.getTime()
+	local numTxDataPacketsSinceLog = 0
+	local numRxDataPacketsSinceLog = 0
+	local numTxAckPacketsSinceLog = 0
+	local numRxAckPacketsSinceLog = 0
 
-	   
+	local numActiveQueues = 0
+	while dpdk.running() do	   
+	   local dpdkLoopStartTime = dpdk.getTime()
+	   numLoopsSinceStart = numLoopsSinceStart + 1
+
+	   if monitorPipe ~= nil and
+	   numLoopsSinceStart % monitor.constDataNumLoops == 0 then
+	      monitorPipe:send(
+		 ffi.new("genericMsg",
+			 {["valid"]= 1234,
+			    ["time"]= dpdkLoopStartTime,
+			    ["msgType"]= monitor.typeDataStatsPerDpdkLoop,
+			    ["d1"]= (dpdkLoopStartTime
+					  - lastLoggedDpdkLoopStartTime),
+			    ["d2"]= numTxDataPacketsSinceLog,
+			    ["i1"]= numRxDataPacketsSinceLog,
+			    ["i2"]= numTxAckPacketsSinceLog,
+			    ["loop"]=numRxAckPacketsSinceLog
+	      }))
+	      numTxDataPacketsSinceLog = 0
+	      numRxDataPacketsSinceLog = 0
+	      numTxAckPacketsSinceLog = 0
+	      numRxAckPacketsSinceLog = 0
+	      lastLoggedDpdkLoopStartTime = dpdkLoopStartTime
+	   end
+
 	   do -- NEW FLOWS TO SEND
 	      local msgs = ipc.acceptFcdStartMsgs(pipes)
 	      if next(msgs) ~= nil then
@@ -103,12 +132,24 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		    numPacketsAcked[msg.flow] = 0
 		    numPacketsCommitted[msg.flow] = 0
 		    queues[msg.flow] = msg.queue
+		    numActiveQueues = numActiveQueues + 1
 		    -- data1Mod.log("dataSlave: new flow " .. msg.flow .. " of size " .. msg.size .. " on queue " .. msg.queue)
-		 end		
+		 end
+		 if monitorPipe ~= nil then
+		    monitorPipe:send(
+		       ffi.new("genericMsg",
+			       {["valid"]= 1234,
+				  ["i1"]= numActiveQueues,
+				  ["msgType"]= monitor.typeNumActiveQueues,
+				  ["time"]= now }))
+		 end
+
 	      end -- ends if next(msgs)..
 	   end
 
 	   do -- SEND DATA PACKETS
+	      local atLeastOneFlowEnded = false
+	      local now = dpdk.getTime()
 	      for flow, queueNo in pairs(queues) do
 		 local numLeft = numPacketsLeft[flow]
 		 local numSent = numPacketsSent[flow]
@@ -127,7 +168,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		    pkt.payload.uint16[0]= flow
 		    pkt.payload.uint16[1]= numSent+i
 		    pkt.payload.uint16[2]= math.random(0, 2^16 - 1)
-		    pkt.payload.uint16[3]= dpdkLoopCounter
+		    pkt.payload.uint16[3]= numLoopsSinceStart
 		    local customChecksum = checksum(pkt.payload,8)
 		    -- data1Mod.log("\nChecksum for transmitted packet (got "
 		    --  	     .. customChecksum .. ")\n")
@@ -140,6 +181,8 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		 --txBufs:offloadUdpChecksums()
 		 assert(txBufs.size == numToSend)
 		 local numSentNow = dev:getTxQueue(queueNo):send(txBufs)
+		 numTxDataPacketsSinceLog = numTxDataPacketsSinceLog
+		    + numSentNow
 		 numLeft = numLeft - numSentNow
 		 --data1Mod.log("Sent " .. numSentNow .. " data packets of flow " .. flow
 		 --	  .. ", " .. numLeft .. " to go")
@@ -147,13 +190,23 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		 numPacketsLeft[flow] = numLeft
 		 numPacketsSent[flow] = numSent + numSentNow
 		 if (numLeft == 0) then
-		    local now = dpdk.getTime()
+		    atleastOneFlowEnded = true
 		    numPacketsLeft[flow] = nil
 		    queues[flow] = nil
+		    numActiveQueues = numActiveQueues - 1
 		    -- no more sending
 		    ipc.sendFdcFinMsg(pipes, flow, now)
 		 end	      
 	      end -- ends for flow, queueNo in queues
+
+	      if atLeastOneFlowEnded then
+		 monitorPipe:send(
+		    ffi.new("genericMsg",
+			    {["valid"]= 1234,
+			       ["i1"]= numActiveQueues,
+			       ["msgType"]= monitor.typeNumActiveQueues,
+			       ["time"]= now }))
+	      end
 	      -- also need to send ACKs for received packets
 	   end
 
@@ -164,7 +217,11 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	      do -- RECEIVE DATA PACKETS
 		 local now = dpdk.getTime()
 		 local rx = rxQueue:tryRecv(rxBufs, 128)
-		 --if (rx > 0) then data1Mod.log("Received " .. rx .. " data packets") end
+		 
+		 if (rx > 0) then
+		    -- data1Mod.log("Received " .. rx .. " data packets")
+		    numRxDataPacketsSinceLog = numRxDataPacketsSinceLog + rx
+		 end
 		 for i = 1, rx do
 		    local buf = rxBufs[i]
 		    local pkt = buf:getUdpPacket()
@@ -208,17 +265,7 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 			  numAcks = numAcks + 1
 		       end		 
 		    else
-		       corruptedDataPkts = corruptedDataPkts + 1
-		       if (corruptedDataPkts % 100 == 0) then
-			  if monitorPipe ~= nil then
-			     monitorPipe:send(
-				ffi.new("genericMsg",
-					{["valid"]= 1234,
-					   ["i1"]= corruptedDataPkts,
-					   ["msgType"]= monitor.typeCorruptedDataPkts,
-					   ["time"]= now }))
-			  end
-		       end
+		       corruptedDataPkts = corruptedDataPkts + 1		    
 		       --data1Mod.log("Received corrupted UDP message.\n")
 		    end
 		 end
@@ -246,6 +293,8 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 		    end
 		    assert(bufNo == numAcks+1)
 		    local numSent = txQueueAck:sendN(txBufsAck, numAcks)
+		    numTxAckPacketsSinceLog = numTxAckPacketsSinceLog + numSent
+
 		    --data1Mod.log("data " .. readyInfo.id .. " sent " .. numSent .. " of "
 		    --	       .. numAcks .. " pending Acks.")
 		 end
@@ -258,6 +307,11 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	      local now = dpdk.getTime()
 	      -- wait for 128us??
 	      local rx = rxQueueAck:tryRecv(rxBufsAck, 128)
+	      if (rx > 0) then
+		 -- data1Mod.log("Received " .. rx .. " ack packets")
+		 numRxAckPacketsSinceLog = numRxAckPacketsSinceLog + rx
+	      end
+	      
 	      for i = 1, rx do	      
 		 local buf = rxBufsAck[i]
 		 local pkt = buf:getUdpPacket()
@@ -291,7 +345,17 @@ function data1Mod.dataSlave(dev, pipes, readyInfo, monitorPipe)
 	   -- TODO(lav): garbage collect flowIds that are > 100 older
 	   --  and discard any related packets..
 	   txCtr:update()
-	   dpdkLoopCounter = dpdkLoopCounter + 1
+
+	   if (numLoopsSinceStart % monitor.constDataNumLoops == 0) then
+	      if monitorPipe ~= nil then
+		 monitorPipe:send(
+		    ffi.new("genericMsg",
+			    {["valid"]= 1234,
+			       ["i1"]= corruptedDataPkts,
+			       ["msgType"]= monitor.typeCorruptedDataPkts,
+			       ["time"]= now }))
+	      end
+	   end	   
 	end -- ends while dpdk.running()
 	txCtr:finalize()
 	--rxCtr:finalize()
