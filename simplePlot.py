@@ -3,6 +3,7 @@ import numpy as np
 import argparse
 import os
 import sys
+import random
 
 parser = argparse.ArgumentParser(description='Plot some timeseries.')
 
@@ -19,6 +20,10 @@ parser.add_argument('--groupBy', type=str, default=None)
 parser.add_argument('--groupByFor', nargs='+', type=int, default=None)
 args = parser.parse_args()
 
+"""
+example
+python simplePlot.py --dataName flow_tx_rate_configured --value configured --groupBy flow --groupByFor 100 101 --startTime 6.70e6 --endTime 6.74e6
+"""
 
 def show_datanames(filename):
     os.system("|".join([("cat %s"%filename),
@@ -116,6 +121,10 @@ with open(args.filename) as f:
                                                  args.endTime),
                                  dtype='f')
             groupByForStr = "_".join([str(v) for v in args.groupByFor])
+            if len(groupByForStr) > 15:
+                groupByForStr = groupByForStr[:7] + "dotdotdot"+ groupByForStr[-7:]
+                print groupByForStr
+
             outputFileName =\
                              "/home/lavanyaj/www/%s-%s_timeseries-%s_in_%s.pdf"\
                              %(args.dataName, args.value, args.groupBy, groupByForStr)
@@ -123,12 +132,13 @@ with open(args.filename) as f:
             print data
             print data.shape
 
+            
             gb = data[:,0] # data[1:5, 0]
             # print "first five rows, flow no"
             # print gb
             
             plts = {}
-            colors = ['r', 'g', 'b']
+
             labelMarkers = {}
             arrLabelMarkers = []
             arrLabels = []
@@ -143,7 +153,7 @@ with open(args.filename) as f:
                 # print "getting data where flow is %s" % (str(v))
                 # print gbData
 
-                col = colors[i%len(colors)]
+                col = plt.cm.jet(random.random()) 
                 lab = "%s-%s"%(args.groupBy, str(v))
                 plts[v] = plt.scatter(gbData[2:,1], gbData[2:,2],\
                                       c=col,
@@ -155,8 +165,8 @@ with open(args.filename) as f:
                 arrLabels.append(lab)
                 i = i + 1
 
-
-            plt.legend(tuple(arrLabelMarkers), tuple(arrLabels), loc='best')
+            if len(arrLabels) < 16:
+                plt.legend(tuple(arrLabelMarkers), tuple(arrLabels), loc='best')
 
             plt.savefig(outputFileName)
 
