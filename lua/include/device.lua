@@ -38,8 +38,10 @@ mod.PCI_ID_I350		= 0x80861521
 mod.PCI_ID_82576	= 0x80861526
 mod.PCI_ID_X710		= 0x80861572
 mod.PCI_ID_XL710	= 0x80861583
+mod.PCI_ID_XL710Q1	= 0x80861584
 
 mod.PCI_ID_82599_VF	= 0x808610ed
+mod.PCI_ID_VIRTIO	= 0x1af41000
 
 function mod.init()
 	dpdkc.rte_pmd_init_all_export();
@@ -91,7 +93,7 @@ local devices = {}
 --- Configure a device
 --- @param args A table containing the following named arguments
 ---   port Port to configure
----   mempool optional (default = create a new mempool) Mempool to associate to the device
+---  mempools optional (default = create new mempools) RX mempools to associate with the queues
 ---   rxQueues optional (default = 1) Number of RX queues to configure 
 ---   txQueues optional (default = 1) Number of TX queues to configure 
 ---   rxDescs optional (default = 512)
@@ -146,7 +148,6 @@ function mod.config(...)
 	else
 		log:fatal("Device config needs at least one argument.")
 	end
-
 	args.rxQueues = args.rxQueues or 1
 	args.txQueues = args.txQueues or 1
 	args.rxDescs  = args.rxDescs or 512
@@ -163,13 +164,17 @@ function mod.config(...)
 	if args.stripVlan == nil then
 		args.stripVlan = true
 	end
-	-- create a mempool with enough memory to hold tx, as well as rx descriptors
-	-- (tx descriptors for forwarding applications when rx descriptors from one of the device are directly put into a tx queue of another device)
-	-- FIXME: n = 2^k-1 would save memory
-	args.mempool = args.mempool or memory.createMemPool{n = args.rxQueues * args.rxDescs + args.txQueues * args.txDescs, socket = dpdkc.get_socket(args.port)}
 	if devices[args.port] and devices[args.port].initialized then
 		log:warn("Device %d already configured, skipping initilization", args.port)
 		return mod.get(args.port)
+	end
+	if not args.mempools then
+		args.mempools = {}
+		for i = 1, args.rxQueues do
+			table.insert(args.mempools, args.mempool or memory.createMemPool{n = 2047, socket = dpdkc.get_socket(args.port)})
+		end
+	elseif #args.mempools ~= args.rxQueues then
+		log:fatal("number of mempools must equal number of rx queues")
 	end
 	args.speed = args.speed or 0
 	args.dropEnable = args.dropEnable == nil and true
@@ -207,12 +212,17 @@ function mod.config(...)
 	-- FIXME: this is stupid and should be fixed in DPDK
 	local isi40e = pciId == mod.PCI_ID_XL710
 	            or pciId == mod.PCI_ID_X710
+	            or pciId == mod.PCI_ID_XL710Q1
 	-- TODO: support options
 	local disablePadding = pciId == mod.PCI_ID_X540
 	                    or pciId == mod.PCI_ID_X520
 	                    or pciId == mod.PCI_ID_X520_T2
 	                    or pciId == mod.PCI_ID_82599
-	local rc = dpdkc.configure_device(args.port, args.rxQueues, args.txQueues, args.rxDescs, args.txDescs, args.speed, args.mempool, args.dropEnable, rss_enabled, rss_hash_mask, args.disableOffloads or false, isi40e, args.stripVlan, disablePadding)
+	local mempools = ffi.new("struct mempool*[?]", args.rxQueues)
+	for i, v in ipairs(args.mempools) do
+		mempools[i - 1] = v
+	end
+	local rc = dpdkc.configure_device(args.port, args.rxQueues, args.txQueues, args.rxDescs, args.txDescs, args.speed, mempools, args.dropEnable, rss_enabled, rss_hash_mask, args.disableOffloads or false, isi40e, args.stripVlan, disablePadding)
 	if rc ~= 0 then
 	    log:fatal("Could not configure device %d: error %d", args.port, rc)
 	end
@@ -411,7 +421,9 @@ local deviceNames = {
 	[mod.PCI_ID_X540]	= "Ethernet Controller 10-Gigabit X540-AT2",
 	[mod.PCI_ID_X710]	= "Intel Corporation Ethernet 10G 2P X710 Adapter",
 	[mod.PCI_ID_XL710]	= "Ethernet Controller LX710 for 40GbE QSFP+",
+	[mod.PCI_ID_XL710Q1]	= "Ethernet Converged Network Adapter XL710-Q1",
 	[mod.PCI_ID_82599_VF]	= "Intel Corporation 82599 Ethernet Controller Virtual Function",
+	[mod.PCI_ID_VIRTIO]	= "Virtio network device"
 }
 
 function dev:getName()
@@ -520,7 +532,7 @@ end
 --- get the number of packets received since the last call to this function
 function dev:getRxStats()
 	local devId = self:getPciId()
-	if devId == mod.PCI_ID_XL710 or devId == mod.PCI_ID_X710 then
+	if devId == mod.PCI_ID_XL710 or devId == mod.PCI_ID_X710 or devId == mod.PCI_ID_XL710Q1 then
 		local uprc, mprc, bprc, gorc
 		-- TODO: is this always correct?
 		-- I guess it fails on VFs :/
@@ -530,8 +542,10 @@ function dev:getRxStats()
 		bprc, lastBprc[self.id] = readCtr32(self.id, GLPRT_BPRCL[port], lastBprc[self.id])
 		gorc, lastGorc[self.id] = readCtr48(self.id, GLPRT_GORCL[port], lastGorc[self.id])
 		return uprc + mprc + bprc, gorc
-	else
+	elseif devId == mod.PCI_ID_82599 or devId == mod.PCI_ID_X540 or devId == mod.PCI_ID_X520 or devId == mod.PCI_ID_X520_T2 then
 		return dpdkc.read_reg32(self.id, GPRC), dpdkc.read_reg32(self.id, GORCL) + dpdkc.read_reg32(self.id, GORCH) * 2^32
+	else
+		return 0, 0
 	end
 end
 
@@ -541,7 +555,7 @@ function dev:getTxStats()
 	local badBytes = tonumber(dpdkc.get_bad_bytes_sent(self.id))
 	-- FIXME: this should really be split up into separate functions/files
 	local devId = self:getPciId()
-	if devId == mod.PCI_ID_XL710 or devId == mod.PCI_ID_X710 then
+	if devId == mod.PCI_ID_XL710 or devId == mod.PCI_ID_X710 or devId == mod.PCI_ID_XL710Q1 then
 		local uptc, mptc, bptc, gotc
 		local port = dpdkc.get_pci_function(self.id)
 		uptc, lastUptc[self.id] = readCtr32(self.id, GLPRT_UPTCL[port], lastUptc[self.id])
@@ -549,9 +563,10 @@ function dev:getTxStats()
 		bptc, lastBptc[self.id] = readCtr32(self.id, GLPRT_BPTCL[port], lastBptc[self.id])
 		gotc, lastGotc[self.id] = readCtr48(self.id, GLPRT_GOTCL[port], lastGotc[self.id])
 		return uptc + mptc + bptc - badPkts, gotc - badBytes
-	else
-		-- TODO: check for ixgbe
+	elseif devId == mod.PCI_ID_82599 or devId == mod.PCI_ID_X540 or devId == mod.PCI_ID_X520 or devId == mod.PCI_ID_X520_T2 then
 		return dpdkc.read_reg32(self.id, GPTC) - badPkts, dpdkc.read_reg32(self.id, GOTCL) + dpdkc.read_reg32(self.id, GOTCH) * 2^32 - badBytes
+	else
+		return 0, 0
 	end
 end
 
@@ -576,7 +591,7 @@ local RTTDQSEL = 0x00004904
 function txQueue:setRate(rate)
 	local id = self.dev:getPciId()
 	local dev = self.dev
-	if id == mod.PCI_ID_X710 or id == mod.PCI_ID_XL710 then
+	if id == mod.PCI_ID_X710 or id == mod.PCI_ID_XL710 or id == mod.PCI_ID_XL710Q1 then
 		-- obviously fails if doing that from multiple threads; but you shouldn't do that anways
 		dev.totalRate = dev.totalRate or 0
 		dev.totalRate = dev.totalRate + rate
@@ -631,6 +646,10 @@ function txQueue:setTxRateRaw(rate, disable)
 end
 
 function txQueue:getTxRate()
+	local id = self.dev:getPciId()
+	if id ~= mod.PCI_ID_82599 and id ~= mod.PCI_ID_X540 and id ~= mod.PCI_ID_X520 and id ~= mod.PCI_ID_X520_T2 then
+		return 0
+	end
 	local link = self.dev:getLinkStatus()
 	self.speed = link.speed > 0 and link.speed or 10000
 	dpdkc.write_reg32(self.id, RTTDQSEL, self.qid)
