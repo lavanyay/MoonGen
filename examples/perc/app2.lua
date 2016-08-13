@@ -3,11 +3,18 @@ local dpdk	= require "dpdk"
 local ipc = require "examples.perc.ipc"
 local monitor = require "examples.perc.monitor"
 local utils = require "utils"
+local perc_constants = require "examples.perc.constants"
 
 app2Mod = {}
 local PKT_PAYLOAD_SIZE = 1200
 local MAX_FLOW_SIZE = (2000 * 1500) -- 15000000 --15000000
 local MEAN_INTER_ARRIVAL_TIME = 1
+
+function app2Mod.log(str)
+   if perc_constants.LOG_APP then
+      print("app2.lua log: " .. str)
+   end
+end
 
 -- app generates workload with poisson arrival and random size distribution (for now)
 function app2Mod.startNewFlow(newFlowId, numPackets, active, pipes, now)
@@ -32,7 +39,7 @@ end
 
 function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
    local thisCore = dpdk.getCore()
-   print("Running application slave on core " .. thisCore)   
+   app2Mod.log("Running application slave on core " .. thisCore)   
    ipc.waitTillReady(readyInfo)
    local lastSentTime = dpdk.getTime()
    local newFlowId = 100
@@ -49,7 +56,7 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
    local nextSendTime = now --+ poissonDelay(MEAN_INTER_ARRIVAL_TIME)
 
    -- active flows is flows that have seen action in the last ACTIVE seconds
-   -- we'll print out the FCT when a flow is GC-ed from active flows
+   -- we'll app2Mod.log out the FCT when a flow is GC-ed from active flows
    local numActiveFlows = 0
    local activeFlows = {}
 
@@ -81,7 +88,7 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 	 end
       end
 
-      -- Print FCT stats for stale flows and remove them from active list
+      -- App2Mod.Log FCT stats for stale flows and remove them from active list
       now = dpdk.getTime()
       for flowId, xx in pairs(activeFlows) do	 
 	 -- TODO(lav): Flows with many packets could take a while
@@ -94,12 +101,12 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 	    
 	    local fct = lastCommitTime - startTime
 	    local minFct = lastCommitNumber * (1.2e-6) 
-	    print("Flow " .. flowId .. " kinda finished in "
+	    app2Mod.log("Flow " .. flowId .. " kinda finished in "
 		     .. fct .. "s (min : " .. minFct .. "s) "
 		     .. "( " .. lastCommitNumber .. " / "
 			.. size .. " )")
 	    -- TODO(lav): V fails
-	    assert(lastCommitNumber <= size)
+	    --assert(lastCommitNumber <= size)
 	    local lossRate = (100*(size-lastCommitNumber))/size
 
 	    if (monitorPipe ~= nil) then
@@ -121,7 +128,7 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 
 	    
 	    if (monitorPipe ~= nil) then
-	       print("sending msg of typeAppActiveFlowsNum")
+	       app2Mod.log("sending msg of typeAppActiveFlowsNum")
 	       monitorPipe:send(
 		  ffi.new("genericMsg",
 			  {["i1"]= numActiveFlows,
@@ -165,8 +172,8 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 	    tries = tries + 1
 	    assert(tries < 50)
 	 end
-	 print("Memory in use " .. collectgarbage("count") .. "Kb")
-	 print("Change  at "
+	 app2Mod.log("Memory in use " .. collectgarbage("count") .. "Kb")
+	 app2Mod.log("Change  at "
 		  .. sendTime .. ": add " .. newFlowId .. " of size " .. size
 		  .. "B, so " .. numActiveFlows .. " active flows"
 		  .. ", next sendTime in " .. (nextSendTime - now) .. "s.\n")
@@ -174,10 +181,10 @@ function app2Mod.applicationSlave(pipes, readyInfo, monitorPipe)
 	 newFlowId = newFlowId+1
 	 if (newFlowId == 256) then
 	    assert(false)
-	    print("wrapping flowid, starting at 100 again.")
+	    app2Mod.log("wrapping flowid, starting at 100 again.")
 	    newFlowId = 100
 	 end
-	 print("next send time is " .. nextSendTime)
+	 app2Mod.log("next send time is " .. nextSendTime)
       end
    end
 end

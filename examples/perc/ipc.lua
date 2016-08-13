@@ -150,11 +150,15 @@ end
 
 -- try to get as many packets as possible in waitxTenUs x 10us
 function ipcMod.fastAcceptMsgs(pipes, pipeName, msgType, waitxTenUs)
-   if pipes == nil or pipes[pipeName] == nil then
-      print("acceptMsgs on nil pipe! return!!")
-      return
-   end 
+   if pipes == nil then
+      return {}
+   end
 
+   if pipes[pipeName] == nil then 
+      print("acceptMsgs on nil pipe! return!!")
+      return {}
+   end
+   
    local pipe = pipes[pipeName]
    local msgs = {}
    
@@ -236,11 +240,11 @@ function ipcMod.waitTillReady(readyInfo)
       while numReadyMsgs < numPipes-1 do
 	 if myPipe:recv() ~= nil then 
 	    numReadyMsgs = numReadyMsgs + 1
-	    print("Received " .. numReadyMsgs .. " ready messages on pipe # " .. readyInfo.id)
+	    --print("Received " .. numReadyMsgs .. " ready messages on pipe # " .. readyInfo.id)
 	 end
       end
       
-      print("Received " .. numReadyMsgs .. " ready messages on pipe # " .. readyInfo.id)
+      --print("Received " .. numReadyMsgs .. " ready messages on pipe # " .. readyInfo.id)
    end
 end
 

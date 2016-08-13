@@ -163,38 +163,27 @@ end
 function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
       local thisCore = dpdk.getCore()
       control2Mod.log("Running control slave on core " .. thisCore)
-
-      local egressLink = Link1:new()
-      
-      -- create memory pool to be used by new control packets we'll tx
-      -- Hmm(lav):
-      --  1) setting custom bufSize -> segfault
-      --  2) no limit to how many mbufs I can allocate without freeing
-      --  3) allocated mbuf doesn't have fields initialized to default values
-      --  (except I think mbuf from first alloc)
-      local mem = memory.createMemPool{
-	 --	    bufSize = CONTROL_PACKET_SIZE,
-	 func = initializePercc1Packet
-      }
+      local egressLink = Link1:new()      
+      local mem = memory.createMemPool()
       
       
       local lastRxTime = 0
       local lastTxTime = 0
-      local rxQueue = dev:getRxQueue(perc_constants.CONTROL_QUEUE)
+      local rxQueue = dev:getRxQueue(perc_constants.CONTROL_RXQUEUE)
       assert(rxQueue ~= nil)
-      local txQueue = dev:getTxQueue(perc_constants.CONTROL_QUEUE)
+      local txQueue = dev:getTxQueue(perc_constants.CONTROL_TXQUEUE)
       assert(txQueue ~= nil)
       
       local freeQueues = {}
       -- what I really need is just flow id -> queue and queue -> config + flowId
       local queues = {}
-      local queueRates = ffi.new("rateInfo[?]", 128)
+      local queueRates = ffi.new("rateInfo[?]", 129)
       -- all but tx 1 for data
-      for i=0, 127 do
-	 if (127-i) ~= perc_constants.CONTROL_QUEUE
-	    and (127-i) ~= perc_constants.ACK_QUEUE
-	 and (127-i) ~= perc_constants.DROP_QUEUE then 
-	    table.insert(freeQueues, 127-i)
+      for i=1, perc_constants.MAX_QUEUES do
+	 if i ~= perc_constants.CONTROL_TXQUEUE
+	    and i ~= perc_constants.ACK_TXQUEUE
+	 and i ~= perc_constants.DROP_QUEUE then 
+	    table.insert(freeQueues, i)
 	 end
 	 queueRates[i].currentRate = 1
 	 queueRates[i].nextRate = -1
@@ -205,7 +194,8 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
       local pendingChangeRate = {}
 	
 
-      local bufs = memory.bufArray() -- to rx packets and modify and tx
+      local bufs = memory.bufArray()
+      -- to rx packets and modify and tx
       local newBufs = mem:bufArray(
 	 perc_constants.NEW_FLOWS_PER_CONTROL_LOOP)
       -- for packets sent out for new flows
@@ -221,18 +211,6 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
        local numTxNewControlPacketsSinceLog = 0
        local numTxOngoingControlPacketsSinceLog = 0
        local numRxControlPacketsSinceLog = 0
-
-       -- Hmm(lav) No limit to mbufs I can allocate
-       -- without freeing: By default mempool is 2048 bufs
-       -- large, and these newBufs once allocated
-       -- from mempool are never freed. Then
-       -- how am I able to allocate 200K membufs
-       -- from the mempool??
-       -- for i=1,100000 do
-       -- 	  newBufs:alloc(CONTROL_PACKET_SIZE)
-       -- end       
-       -- print(newBufs[1]:getPercc1Packet().percc1:getHop())
-       -- assert(false)
 
        ipc.waitTillReady(readyInfo)
        control2Mod.log("ready to start control2")
@@ -339,7 +317,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		   -- will set FIN for flows that ended
 		   -- will update rates otherwise
 		   if pkt.percc1:getIsExit() == percc1.IS_EXIT then -- receiver echoed fin
-		      --control2Mod.log("tx control gets exit pkt for flow " .. pkt.percg:getFlowId())
+		      control2Mod.log("tx control gets exit pkt for flow " .. pkt.percg:getFlowId())
 		      control2Mod.log("Flow " .. flowId
 			       .. " " .. readyInfo.id .. " received exit packet (marked not fwd)"
 			       .. " ethType is " .. pkt.eth:getType()
@@ -347,13 +325,13 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		      pkt.eth:setType(eth.TYPE_DROP)
 		      
 		   elseif queues[flowId] == nil then -- flow ended
-		      --control2Mod.log("tx control gets regular pkt for no-more-data flow " .. pkt.percg:getFlowId())
+		      control2Mod.log("tx control gets regular pkt for no-more-data flow " .. pkt.percg:getFlowId())
 		      control2Mod.percc1ProcessAndGetRate(pkt)
 		      control2Mod.postProcessTiming(pkt, now, monitorPipe)
 		      assert(pkt.percc1:getIsForward() == percc1.IS_FORWARD)
 		      pkt.percc1:setIsExit(percc1.IS_EXIT)	      
 		   else -- flow hasn't ended yet, update rates
-		      --control2Mod.log("tx control gets regular pkt for have-more-data flow " .. pkt.percg:getFlowId())
+		      control2Mod.log("tx control gets regular pkt for have-more-data flow " .. pkt.percg:getFlowId())
 		      local rate1 = control2Mod.percc1ProcessAndGetRate(pkt)
 		      control2Mod.postProcessTiming(pkt, now, monitorPipe)
 		      if monitorPipe ~= nil then
@@ -371,7 +349,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		      assert(pkt.percc1:getIsForward() == percc1.IS_FORWARD)
 		      assert(rate1 ~= nil)
 		      local queueNo = queues[flowId]
-		      --control2Mod.log("flow was assigned queue " .. queueNo)
+		      control2Mod.log("flow was assigned queue " .. queueNo)
 		      assert(queueNo ~= nil)
 		      local rateInfo = queueRates[queueNo]
 		      -- should setup with queue
@@ -403,7 +381,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 			       }))
 			    end
 			 else -- rate1 > rateInfo[0].currentRate
-			    --control2Mod.log("  new rate " .. rate1 .. " is bigger than current " .. rateInfo.currentRate)
+			    control2Mod.log("  new rate " .. rate1 .. " is bigger than current " .. rateInfo.currentRate)
 			    if rateInfo.nextRate == -1 then
 			       rateInfo.nextRate = rate1
 			       rateInfo.changeTime = now + 100e-6
@@ -413,7 +391,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 					.. " No next rate scheduled, setting next rate to " .. rate1
 					.. ", change at " .. rateInfo.changeTime .. "s ")
 			    elseif rateInfo.nextRate == rate1 then
-			       --control2Mod.log("     next rate is the same as new rate, do nothing")
+			       control2Mod.log("     next rate is the same as new rate, do nothing")
 			    elseif rateInfo.nextRate >= 0 and rate1 < rateInfo.nextRate then
 			       control2Mod.log("Flow " .. flowId
 					.. " received bottleneck rate " .. rate1
@@ -505,13 +483,17 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 				       ["loop"]= numLoopsSinceStart
 			 }))
 		      end		  
-		      -- control2Mod.log("assigned a rateInfo struct for " .. flowId)
+		      control2Mod.log("assigned a rateInfo struct for " .. flowId)
 		      -- newBufs has only so many mbufs
 		      assert(numNew <=
 				perc_constants.NEW_FLOWS_PER_CONTROL_LOOP)
 		      
 		      numNew = numNew + 1
 		      -- tell data thread
+		      control2Mod.log("telling data thread to start flow"
+					 .. msg.flow .. " of size "
+					 .. msg.size .. " packets "
+					 .." from queue " .. queue)
 		      ipc.sendFcdStartMsg(pipes, msg.flow,
 					  msg.destination,
 					  msg.size, queue)
@@ -557,7 +539,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		end -- for msgNo, msg..
 		txQueue:sendN(newBufs, numNew)
 		numTxNewControlPacketsSinceLog = numTxNewControlPacketsSinceLog + numNew
-		--control2Mod.log("Sent " .. numNew .. " new packets")
+		control2Mod.log("Sent " .. numNew .. " new packets")
 	     else
 		noNewPackets = noNewPackets + 1
 		if (noNewPackets % 100000 == 0) then
@@ -570,10 +552,10 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 	     -- deallocates queues for completed flows
 	     local msgs =
 		ipc.fastAcceptMsgs(
-		   pipes, "fastPipeDataToControlFin",
-		   "pFdcFinMsg", 20) --ipc.acceptFdcEndMsgs(pipes)
+		   pipes, "fastPipeDataToControlFinAck",
+		   "pFdcFinAckMsg", 20) --ipc.acceptFdcEndMsgs(pipes)
 	     if next(msgs) ~= nil then
-		--control2Mod.log("deallocate queues from completed flows")
+		control2Mod.log("deallocate queues from completed flows")
 		for msgNo, msg in pairs(msgs) do
 		   local flowId = msg.flow
 		   assert(flowId >= 100)
@@ -598,7 +580,9 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		      }))
 		   end
 		   -- TODO(lav) : too many nows, maybe number them
-		   ipc.sendFcaFinMsg(pipes, msg.flow, msg.endTime)
+		   ipc.sendFcaFinAckMsg(pipes, msg.flow, msg.size,
+					msg.endTime)
+		   --ipc.sendFcaFinMsg(pipes, msg.flow, msg.endTime)
 		   -- control2Mod.log("deallocated queue " .. queueNo .. " for flow " .. flowId)
 		end
 	     end
@@ -643,17 +627,6 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 	     end -- for queueNo, ..
 	  end
 
-	  do -- TELL APPLICATIONS ABOUT ACKS
-	     -- tells applications about flows that finished data completely
-	     local msgs = ipc.acceptFdcFinAckMsgs(pipes)
-	     if next(msgs) ~= nil then
-		--control2Mod.log("deallocate queues from completed flows")
-		for msgNo, msg in pairs(msgs) do
-		   ipc.sendFcaFinAckMsg(pipes, msg.flow, msg.size,
-					msg.endTime)
-		end
-	     end
-	  end
       end -- while dpdk.running()	
       dpdk.sleepMillis(5000)
 end
