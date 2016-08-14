@@ -284,9 +284,10 @@ function data2Mod.txSlave(dev, ipcPipes, readyInfo, monitorPipe)
 	       local acked_time = tonumber(queueInfo[q].acked_time)
 	       if now > acked_time
 	       + perc_constants.tx_ack_timeout then
+		  local logFunc = data2Mod.txlog
 		  if queueInfo[q].acked == 0 then
 		     logFunc = data2Mod.warn
-		  else logFunc = data2Mod.warn end
+		  end
 		  logFunc("sending fin-ack for "
 			     .. tostring(queueInfo[q].flow)
 			     .. " acked "

@@ -37,6 +37,12 @@ bool valid;
 -- and tx
 -- then fetch new flows list and completed flows list.
 
+function control2Mod.warn(str)
+   if perc_constants.WARN_CONTROL then
+      print("control2.lua warn: " .. str)
+   end
+end
+
 function control2Mod.log(str)
    if perc_constants.LOG_CONTROL then
       print(str)
@@ -367,7 +373,11 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 			    rateInfo.changeTime = -1
 			    local dTxQueue = dev:getTxQueue(queueNo)
 			    local configuredRate = rate1
-			    configuredRate = 500
+			    if rate1 > percc1.RATE_TEN_GBPS then
+			       rateInfo.currentRate = 500
+			       configuredRate = 500
+			       control2Mod.warn("received bottleneck rate > link cap, set to 500 Mb/s")
+			       end
 			    dTxQueue:setRate(configuredRate)
 			    if monitorPipe ~= nil then
 			       monitorPipe:send(
@@ -470,7 +480,6 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		      queueRates[queue].currentRate = 1
 		      local configuredRate = queueRates[queue].currentRate
 		      local dTxQueue = dev:getTxQueue(queue)
-		      configuredRate = 500
 		      dTxQueue:setRate(configuredRate)
 		      if monitorPipe ~= nil then
 			 monitorPipe:send(
@@ -607,8 +616,12 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		   queueRates[queueNo].changeTime = -1
 
 		   local configuredRate = queueRates[queueNo].currentRate
+		   if configuredRate > percc1.RATE_TEN_GBPS then
+		      queueRates[queueNo].currentRate = 500
+		      configuredRate = 500
+		      control2Mod.warn("had received bottleneck rate > link cap, set to 500 Mb/s")
+		   end
 		   local dTxQueue = dev:getTxQueue(queueNo)
-		   configuredRate = 500
 		   dTxQueue:setRate(configuredRate)
 
 		   if monitorPipe ~= nil then

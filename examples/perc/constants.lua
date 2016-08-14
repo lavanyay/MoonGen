@@ -18,10 +18,11 @@ constantsMod = {
    ["NEW_FLOWS_PER_CONTROL_LOOP"] = 2,
    ["NIC_DESCRIPTORS_PER_QUEUE"] = 40,  -- 82599 TODO(lav): indep. of pkt size, 1 / pkt
    ["WARN_DATA"] = true,
-   ["LOG_RXDATA"] = true,
+   ["LOG_RXDATA"] = false,
    ["LOG_TXDATA"] = false,
    ["LOG_CONTROL"] = false,
-   ["LOG_APP"] = false
+   ["WARN_CONTROL"] = true,
+   ["LOG_APP"] = true
 }
 
 return constantsMod
