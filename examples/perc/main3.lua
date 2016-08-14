@@ -15,10 +15,10 @@ function master(txPort, rxPort)
 	   return log:info("usage: txPort rxPort")
 	end
 	local txDev = device.config{port = txPort,
-				    rxQueues = 10,
+				    rxQueues = 4,
 				    txQueues = perc_constants.MAX_QUEUES+1}
 	local rxDev = device.config{port = rxPort,
-				    rxQueues = 10,
+				    rxQueues = 2,
 				    txQueues = perc_constants.MAX_QUEUES+1}
 
 	-- filters for data packets

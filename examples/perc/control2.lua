@@ -367,7 +367,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 			    rateInfo.changeTime = -1
 			    local dTxQueue = dev:getTxQueue(queueNo)
 			    local configuredRate = rate1
-			    configuredRate = 1000
+			    configuredRate = 500
 			    dTxQueue:setRate(configuredRate)
 			    if monitorPipe ~= nil then
 			       monitorPipe:send(
@@ -470,7 +470,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 		      queueRates[queue].currentRate = 1
 		      local configuredRate = queueRates[queue].currentRate
 		      local dTxQueue = dev:getTxQueue(queue)
-		      configuredRate = 1000
+		      configuredRate = 500
 		      dTxQueue:setRate(configuredRate)
 		      if monitorPipe ~= nil then
 			 monitorPipe:send(
@@ -608,7 +608,7 @@ function control2Mod.controlSlave(dev, pipes, readyInfo, monitorPipe)
 
 		   local configuredRate = queueRates[queueNo].currentRate
 		   local dTxQueue = dev:getTxQueue(queueNo)
-		   configuredRate = 1000
+		   configuredRate = 500
 		   dTxQueue:setRate(configuredRate)
 
 		   if monitorPipe ~= nil then
