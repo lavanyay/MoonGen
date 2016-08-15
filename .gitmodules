@@ -11,3 +11,6 @@
 [submodule "deps/doxygen-lua"]
 	path = deps/doxygen-lua
 	url = https://github.com/scholzd/doxygen-lua.git
+[submodule "examples/perc-moongen"]
+	path = examples/perc-moongen
+	url = https://github.com/lavanyaj/perc-moongen.git
